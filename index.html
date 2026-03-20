@@ -1,0 +1,2343 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>LogExplorer</title>
+<!-- PWA: standalone fullscreen on iOS home screen -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="LogExplorer">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a1a2e">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231a1a2e'/><text x='50' y='62' text-anchor='middle' font-size='40' fill='%23e94560'>L</text><text x='50' y='85' text-anchor='middle' font-size='16' fill='%23eee'>Explorer</text></svg>">
+<link rel="manifest" href="data:application/json,{%22name%22:%22LogExplorer%22,%22short_name%22:%22LogExp%22,%22display%22:%22standalone%22,%22background_color%22:%22%231a1a2e%22,%22theme_color%22:%22%231a1a2e%22,%22start_url%22:%22.%22}">
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --accent: #e94560;
+  --text: #eee;
+  --text-dim: #999;
+  --border: #333;
+  --filter-a: rgba(0,200,80,0.35);
+  --filter-b: rgba(60,120,255,0.35);
+  --filter-c: rgba(255,60,60,0.35);
+  --filter-d: rgba(180,60,255,0.35);
+  --search-hl: rgba(255,200,0,0.4);
+  --font-mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow:hidden; font-family: var(--font-mono); background: var(--bg); color: var(--text); font-size:13px; touch-action:manipulation; }
+
+/* --- TOP BAR --- */
+.topbar {
+  display:flex; align-items:center; gap:6px;
+  padding:6px 8px; background:var(--surface); border-bottom:1px solid var(--border);
+  position:relative; z-index:100;
+}
+.topbar .title { font-weight:700; font-size:14px; color:var(--accent); white-space:nowrap; }
+.topbar .file-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-dim); font-size:12px; }
+.topbar .count { font-size:11px; color:var(--text-dim); white-space:nowrap; }
+
+/* --- ICON BUTTONS --- */
+.icon-btn {
+  width:36px; height:36px; border:none; background:none; color:var(--text); font-size:18px;
+  display:flex; align-items:center; justify-content:center; border-radius:6px; cursor:pointer; flex-shrink:0;
+}
+.icon-btn:active { background:var(--surface2); }
+.icon-btn.active { background:var(--accent); color:#fff; }
+
+/* --- PANELS (slide-in) --- */
+.panel-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; display:none; opacity:0;
+  transition: opacity 0.2s;
+}
+.panel-overlay.show { display:block; opacity:1; }
+.panel {
+  position:fixed; top:0; bottom:0; width:min(60vw, 220px); background:var(--surface);
+  z-index:201; transform:translateX(-100%); transition:transform 0.25s ease;
+  display:flex; flex-direction:column; overflow-y:auto;
+}
+.panel.right { right:0; left:auto; transform:translateX(100%); }
+.panel.open { transform:translateX(0); }
+.panel-header {
+  display:flex; align-items:center; gap:6px; padding:8px 10px; border-bottom:1px solid var(--border);
+  font-weight:700; font-size:14px; position:sticky; top:0; background:var(--surface); z-index:1;
+}
+.panel-header .close-btn { margin-left:auto; }
+.panel-body { padding:6px 8px; flex:1; overflow-y:auto; }
+
+/* --- FILTER PANEL --- */
+.filter-row { margin-bottom:8px; }
+.filter-row label { display:flex; align-items:center; gap:4px; margin-bottom:3px; font-weight:600; font-size:12px; }
+.filter-row label .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+.filter-row input[type=text] {
+  width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px;
+  background:var(--bg); color:var(--text); font-family:var(--font-mono); font-size:13px;
+}
+.filter-row input[type=text]:focus { outline:none; border-color:var(--accent); }
+.filter-check { width:18px; height:18px; accent-color:var(--accent); }
+.filter-apply-btn {
+  width:100%; padding:10px; border:none; border-radius:8px; background:var(--accent); color:#fff;
+  font-weight:700; font-size:14px; cursor:pointer; margin-top:8px;
+}
+.filter-apply-btn:active { opacity:0.8; }
+.realtime-toggle { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12px; }
+.realtime-toggle input { accent-color:var(--accent); }
+
+/* --- LOG KIND PANEL --- */
+.kind-list { list-style:none; }
+.kind-list li {
+  display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px solid rgba(255,255,255,0.05);
+}
+.kind-list li label { flex:1; display:flex; align-items:center; gap:6px; cursor:pointer; }
+.kind-list li .kind-color { width:12px; height:12px; border-radius:3px; flex-shrink:0; }
+.kind-list li .kind-name { font-size:12px; }
+.kind-list li .kind-count { font-size:11px; color:var(--text-dim); margin-left:auto; }
+.kind-bulk-btns { display:flex; gap:6px; margin-bottom:8px; }
+.kind-bulk-btns button {
+  flex:1; padding:6px; border:1px solid var(--border); border-radius:6px;
+  background:var(--bg); color:var(--text); font-size:12px; cursor:pointer;
+}
+.kind-bulk-btns button:active { background:var(--surface2); }
+
+/* --- SELECTION MODE BAR --- */
+.select-bar {
+  display:none; align-items:center; gap:8px;
+  padding:6px 10px; background:var(--accent); color:#fff;
+  font-size:13px; font-weight:600;
+}
+.select-bar.show { display:flex; }
+.select-bar .sel-count { flex:1; }
+.select-bar button {
+  border:none; background:rgba(255,255,255,0.2); color:#fff;
+  padding:5px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;
+}
+.select-bar button:active { background:rgba(255,255,255,0.35); }
+.log-line.sel-checked { background:rgba(233,69,96,0.18) !important; }
+
+/* --- LOG DISPLAY --- */
+.log-container {
+  flex:1; overflow:hidden; position:relative; display:flex; flex-direction:column;
+}
+.log-viewport {
+  flex:1; overflow-y:auto; overflow-x:auto; -webkit-overflow-scrolling:touch;
+  font-family:var(--font-mono); font-size:12px; line-height:1.5;
+}
+.log-viewport.dark-theme { background:#111; color:#ddd; }
+.log-viewport.light-theme { background:#fff; color:#222; }
+.log-content-layer { user-select:none; -webkit-user-select:none; min-width:fit-content; }
+.log-line {
+  padding:0 8px; white-space:pre; display:flex; cursor:pointer; min-width:100%;
+}
+.log-line:hover { background:rgba(255,255,255,0.04); }
+.log-line.selected { background:rgba(233,69,96,0.2) !important; }
+.log-prefix { flex-shrink:0; white-space:pre; }
+.log-viewport.dark-theme .log-prefix { color:#999; }
+.log-viewport.light-theme .log-prefix { color:#666; }
+.log-viewport.light-theme .log-line:hover { background:rgba(0,0,0,0.04); }
+.log-content { flex:1; min-width:0; }
+.log-line .hl-a { background:var(--filter-a); border-radius:2px; }
+.log-line .hl-b { background:var(--filter-b); border-radius:2px; }
+.log-line .hl-c { background:var(--filter-c); border-radius:2px; }
+.log-line .hl-d { background:var(--filter-d); border-radius:2px; }
+.log-line .hl-search { background:var(--search-hl); border-radius:2px; }
+
+/* --- SEARCH BAR (bottom) --- */
+.search-bar {
+  display:none; padding:6px 8px; background:var(--surface); border-top:1px solid var(--border);
+  gap:6px; align-items:center;
+}
+.search-bar.show { display:flex; }
+.search-bar input {
+  flex:1; padding:7px 10px; border:1px solid var(--border); border-radius:6px;
+  background:var(--bg); color:var(--text); font-family:var(--font-mono); font-size:13px;
+}
+.search-bar input:focus { outline:none; border-color:var(--accent); }
+.search-bar .search-info { font-size:11px; color:var(--text-dim); white-space:nowrap; }
+
+/* --- JUMP TO TIME --- */
+.time-jump-bar {
+  display:none; padding:6px 8px; background:var(--surface); border-top:1px solid var(--border);
+  gap:6px; align-items:center;
+}
+.time-jump-bar.show { display:flex; }
+.time-jump-bar input {
+  flex:1; padding:7px 10px; border:1px solid var(--border); border-radius:6px;
+  background:var(--bg); color:var(--text); font-family:var(--font-mono); font-size:13px;
+}
+
+/* --- OPEN FILE MENU --- */
+.open-menu {
+  position:fixed; z-index:300; background:var(--surface); border:1px solid var(--border);
+  border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.4); display:none; overflow:hidden;
+  min-width:160px;
+}
+.open-menu.show { display:block; }
+.open-menu button {
+  display:flex; align-items:center; gap:8px; width:100%; padding:12px 14px;
+  border:none; background:none; color:var(--text); font-size:13px; cursor:pointer;
+  text-align:left; font-family:var(--font-mono);
+}
+.open-menu button:active { background:var(--surface2); }
+.open-menu button+button { border-top:1px solid var(--border); }
+.open-menu .menu-icon { font-size:16px; }
+.open-menu .menu-ext { font-size:10px; color:var(--text-dim); }
+
+/* --- BOTTOM TOOLBAR --- */
+.toolbar {
+  display:flex; align-items:center; gap:2px; padding:4px 6px;
+  background:var(--surface); border-top:1px solid var(--border);
+}
+.toolbar .spacer { flex:1; }
+
+/* --- TOAST --- */
+.toast {
+  position:fixed; bottom:60px; left:50%; transform:translateX(-50%);
+  background:var(--surface2); color:var(--text); padding:8px 16px; border-radius:8px;
+  font-size:12px; z-index:300; opacity:0; transition:opacity 0.3s; pointer-events:none;
+}
+.toast.show { opacity:1; }
+
+/* --- PROGRESS --- */
+.progress-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:300; display:none;
+  align-items:center; justify-content:center; flex-direction:column;
+}
+.progress-overlay.show { display:flex; }
+.progress-bar-wrap { width:80%; max-width:300px; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+.progress-bar-fill { height:100%; background:var(--accent); width:0%; transition:width 0.1s; }
+.progress-text { margin-top:8px; font-size:13px; }
+.progress-cancel { margin-top:12px; padding:8px 24px; border:1px solid var(--accent); border-radius:6px; background:none; color:var(--accent); cursor:pointer; }
+
+/* --- DETAIL MODAL --- */
+.detail-modal {
+  position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:250; display:none;
+  align-items:flex-end; justify-content:center;
+}
+.detail-modal.show { display:flex; }
+.detail-content {
+  width:100%; max-height:60vh; background:var(--surface); border-radius:12px 12px 0 0;
+  padding:16px; overflow-y:auto; font-size:12px;
+}
+.detail-content .detail-header { display:flex; justify-content:space-between; margin-bottom:8px; font-size:11px; color:var(--text-dim); }
+.detail-content .detail-body { white-space:pre-wrap; word-break:break-all; line-height:1.6; }
+.detail-nav { display:flex; gap:8px; margin-top:10px; justify-content:center; }
+.detail-nav button { padding:6px 16px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); cursor:pointer; }
+
+/* --- MANUAL MODAL --- */
+.manual-modal {
+  position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:250; display:none;
+  align-items:center; justify-content:center;
+}
+.manual-modal.show { display:flex; }
+.manual-content {
+  width:90%; max-width:500px; max-height:80vh; background:var(--surface); border-radius:12px;
+  padding:16px; overflow-y:auto; font-size:12px; line-height:1.7;
+}
+.manual-content h3 { color:var(--accent); margin:12px 0 6px; }
+.manual-content code { background:var(--bg); padding:1px 5px; border-radius:3px; }
+.manual-content table { width:100%; border-collapse:collapse; margin:8px 0; }
+.manual-content th, .manual-content td { padding:4px 8px; border:1px solid var(--border); text-align:left; font-size:11px; }
+
+/* --- FONT SIZE CONTROL --- */
+.font-size-ctrl {
+  display:none; align-items:center; gap:4px; padding:4px 8px;
+  background:var(--surface); border-top:1px solid var(--border);
+}
+.font-size-ctrl.show { display:flex; }
+.font-size-ctrl button { width:32px; height:32px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); font-size:16px; cursor:pointer; }
+.font-size-ctrl span { min-width:30px; text-align:center; font-size:12px; }
+.font-size-ctrl select {
+  padding:4px 6px; border:1px solid var(--border); border-radius:6px;
+  background:var(--bg); color:var(--text); font-size:12px; max-width:160px;
+}
+
+/* --- SAVE OPTIONS --- */
+.save-panel { padding:12px; }
+.save-panel .save-mode { margin-bottom:12px; }
+.save-panel .save-mode label { display:block; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:4px; cursor:pointer; font-size:12px; }
+.save-panel .save-mode label:has(input:checked) { border-color:var(--accent); background:rgba(233,69,96,0.1); }
+.save-panel .save-mode input { accent-color:var(--accent); margin-right:6px; }
+.save-panel .export-btn { width:100%; padding:10px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-weight:700; cursor:pointer; }
+
+/* --- EMPTY STATE --- */
+.empty-state {
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  color:var(--text-dim); gap:12px;
+}
+.empty-state .drop-zone {
+  width:80%; max-width:300px; height:150px; border:2px dashed var(--border); border-radius:12px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+  cursor:pointer; transition:border-color 0.2s;
+}
+.empty-state .drop-zone:hover, .empty-state .drop-zone.dragover { border-color:var(--accent); }
+.empty-state .drop-zone .icon { font-size:36px; }
+.empty-state .drop-zone .label { font-size:13px; }
+.empty-state .supported { font-size:11px; color:var(--text-dim); margin-top:4px; }
+
+@media(min-width:768px) {
+  .panel { width:min(25vw, 240px); }
+  .icon-btn { width:32px; height:32px; font-size:16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <button class="icon-btn" id="btnKinds" title="Log Kinds">☰</button>
+  <span class="title">LogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260320.03</span></span>
+  <span class="file-name" id="fileName">No file loaded</span>
+  <span class="count" id="logCount"></span>
+  <button class="icon-btn" id="btnFilter" title="Filters">⚙</button>
+</div>
+
+<!-- MAIN CONTENT -->
+<div style="display:flex;flex-direction:column;height:calc(100% - 44px);">
+
+  <!-- EMPTY STATE -->
+  <div class="empty-state" id="emptyState">
+    <div class="drop-zone" id="dropZone">
+      <span class="icon">📂</span>
+      <span class="label">Tap to open or drop file</span>
+    </div>
+    <span class="supported">.log .hrlog .tlog .blog .zip</span>
+    <input type="file" id="fileInputLog" accept=".log,.hrlog,.tlog,.blog" style="display:none">
+    <input type="file" id="fileInputZip" accept=".zip,application/zip" style="display:none">
+  </div>
+
+  <!-- LOG DISPLAY -->
+  <div class="log-container" id="logContainer" style="display:none;">
+    <div class="select-bar" id="selectBar">
+      <span class="sel-count" id="selCount">0 selected</span>
+      <button id="selAll">All</button>
+      <button id="selCopy">Copy</button>
+      <button id="selClose">✕</button>
+    </div>
+    <div class="log-viewport dark-theme" id="logViewport">
+      <div class="log-content-layer" id="logContentLayer"></div>
+    </div>
+  </div>
+
+  <!-- FONT SIZE CONTROL -->
+  <div class="font-size-ctrl" id="fontSizeCtrl">
+    <select id="fontFamily"></select>
+    <button id="fontDec">−</button>
+    <span id="fontSizeLabel">12</span>
+    <button id="fontInc">+</button>
+    <span style="flex:1"></span>
+    <button class="icon-btn" onclick="togglePanel('fontSizeCtrl')" style="font-size:14px">✕</button>
+  </div>
+
+  <!-- SEARCH BAR -->
+  <div class="search-bar" id="searchBar">
+    <input type="text" id="searchInput" placeholder="Search text...">
+    <span class="search-info" id="searchInfo"></span>
+    <button class="icon-btn" id="searchPrev" style="font-size:14px">▲</button>
+    <button class="icon-btn" id="searchNext" style="font-size:14px">▼</button>
+    <button class="icon-btn" onclick="closeSearch()" style="font-size:14px">✕</button>
+  </div>
+
+  <!-- TIME JUMP BAR -->
+  <div class="time-jump-bar" id="timeJumpBar">
+    <input type="text" id="timeJumpInput" placeholder="HH:mm:ss or HH:mm:ss.fff">
+    <button class="icon-btn" id="timeJumpGo" style="font-size:14px">→</button>
+    <button class="icon-btn" onclick="closeTimeJump()" style="font-size:14px">✕</button>
+  </div>
+
+  <!-- BOTTOM TOOLBAR -->
+  <div class="toolbar">
+    <button class="icon-btn" id="btnOpen" title="Open File">📂</button>
+    <button class="icon-btn" id="btnSearch" title="Search (F3)">🔍</button>
+    <button class="icon-btn" id="btnTime" title="Jump to Time">🕐</button>
+    <button class="icon-btn" id="btnHome" title="Jump to Start">⏮</button>
+    <button class="icon-btn" id="btnEnd" title="Jump to End">⏭</button>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="btnFont" title="Font Size">Aa</button>
+    <button class="icon-btn" id="btnCopy" title="Copy Selection">📋</button>
+    <button class="icon-btn" id="btnSave" title="Export">💾</button>
+    <button class="icon-btn" id="btnManual" title="Filter Manual">❓</button>
+  </div>
+</div>
+
+<!-- FILTER PANEL (left) -->
+<div class="panel-overlay" id="filterOverlay"></div>
+<div class="panel right" id="filterPanel">
+  <div class="panel-header">
+    Filters
+    <button class="icon-btn close-btn" onclick="closePanel('filter')">✕</button>
+  </div>
+  <div class="panel-body">
+    <div class="filter-row">
+      <label><span class="dot" style="background:#0c8"></span><input type="checkbox" class="filter-check" id="filterACheck" checked> Filter A</label>
+      <input type="text" id="filterA" placeholder="Expression A">
+    </div>
+    <div class="filter-row">
+      <label><span class="dot" style="background:#38f"></span><input type="checkbox" class="filter-check" id="filterBCheck" checked> Filter B</label>
+      <input type="text" id="filterB" placeholder="Expression B">
+    </div>
+    <div class="filter-row">
+      <label><span class="dot" style="background:#f44"></span><input type="checkbox" class="filter-check" id="filterCCheck" checked> Filter C</label>
+      <input type="text" id="filterC" placeholder="Expression C">
+    </div>
+    <div class="filter-row">
+      <label><span class="dot" style="background:#a3f"></span><input type="checkbox" class="filter-check" id="filterDCheck" checked> Filter D</label>
+      <input type="text" id="filterD" placeholder="Expression D">
+    </div>
+    <div class="realtime-toggle">
+      <input type="checkbox" id="realtimeFilter" checked> <span>Realtime filtering</span>
+    </div>
+    <button class="filter-apply-btn" id="applyFilterBtn">Apply Filter</button>
+  </div>
+</div>
+
+<!-- LOG KIND PANEL (left) -->
+<div class="panel-overlay" id="kindsOverlay"></div>
+<div class="panel" id="kindsPanel">
+  <div class="panel-header">
+    Log Kinds
+    <button class="icon-btn close-btn" onclick="closePanel('kinds')">✕</button>
+  </div>
+  <div class="panel-body">
+    <div class="kind-bulk-btns">
+      <button id="kindAll">All</button>
+      <button id="kindNone">None</button>
+      <button id="kindInv">Invert</button>
+    </div>
+    <ul class="kind-list" id="kindList"></ul>
+  </div>
+</div>
+
+<!-- SAVE PANEL (right) -->
+<div class="panel-overlay" id="saveOverlay"></div>
+<div class="panel right" id="savePanel">
+  <div class="panel-header">
+    Export
+    <button class="icon-btn close-btn" onclick="closePanel('save')">✕</button>
+  </div>
+  <div class="panel-body save-panel">
+    <div class="save-mode">
+      <label><input type="radio" name="saveMode" value="all" checked> All visible logs</label>
+      <label><input type="radio" name="saveMode" value="filter"> Filtered logs only</label>
+      <label><input type="radio" name="saveMode" value="highlight"> Highlighted excerpts</label>
+    </div>
+    <button class="export-btn" id="exportBtn">Export as .txt</button>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="detail-modal" id="detailModal">
+  <div class="detail-content">
+    <div class="detail-header">
+      <span id="detailTime"></span>
+      <span id="detailKind"></span>
+      <button class="icon-btn" onclick="closeDetail()" style="font-size:14px;width:auto;height:auto;">✕</button>
+    </div>
+    <div class="detail-body" id="detailBody"></div>
+    <div class="detail-nav">
+      <button id="detailPrev">◀ Prev</button>
+      <button id="detailNext">Next ▶</button>
+    </div>
+  </div>
+</div>
+
+<!-- MANUAL MODAL -->
+<div class="manual-modal" id="manualModal">
+  <div class="manual-content">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Filter Expression Manual</h3>
+      <button class="icon-btn" onclick="document.getElementById('manualModal').classList.remove('show')">✕</button>
+    </div>
+
+    <h3>Boolean Operators</h3>
+    <table>
+      <tr><th>Operator</th><th>Symbols</th><th>Example</th></tr>
+      <tr><td>AND</td><td><code>AND</code> <code>&amp;</code> <code>&amp;&amp;</code></td><td><code>error AND timeout</code></td></tr>
+      <tr><td>OR</td><td><code>OR</code> <code>|</code> <code>||</code></td><td><code>error | warning</code></td></tr>
+      <tr><td>NOT</td><td><code>NOT</code> <code>!</code> <code>~</code></td><td><code>!debug</code></td></tr>
+      <tr><td>Group</td><td><code>{ }</code></td><td><code>{error | warn} &amp; !debug</code></td></tr>
+    </table>
+
+    <h3>Wildcards</h3>
+    <table>
+      <tr><th>Char</th><th>Meaning</th><th>Example</th></tr>
+      <tr><td><code>*</code></td><td>0+ any characters</td><td><code>*timeout*</code></td></tr>
+      <tr><td><code>?</code></td><td>Exactly 1 character</td><td><code>err?r</code></td></tr>
+      <tr><td><code>#</code></td><td>1+ digits/+/-/./space</td><td><code>Pos(#,#)</code></td></tr>
+      <tr><td><code>"..."</code></td><td>Literal (no wildcards)</td><td><code>"Pos(#,#)"</code></td></tr>
+    </table>
+
+    <h3>Context Operators</h3>
+    <table>
+      <tr><td><code>FIRST target AFTER condition</code></td><td>First match of target after condition is met</td></tr>
+      <tr><td><code>LAST target BEFORE condition</code></td><td>Last match of target before condition is met</td></tr>
+    </table>
+
+    <h3>Prefix Operators (Filter B/C/D)</h3>
+    <p>Filters B, C, D can start with <code>AND</code>, <code>OR</code>, or <code>NOT</code> to combine with previous filters.</p>
+    <p style="margin-top:6px;color:var(--text-dim)">Note: Whitespace is NOT a separator. <code>Mark Str</code> is a single token including the space.</p>
+  </div>
+</div>
+
+<!-- PROGRESS -->
+<div class="progress-overlay" id="progressOverlay">
+  <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progressFill"></div></div>
+  <div class="progress-text" id="progressText">Loading...</div>
+  <button class="progress-cancel" id="progressCancel">Cancel</button>
+</div>
+
+<!-- OPEN FILE MENU -->
+<div class="open-menu" id="openMenu">
+  <button id="openLog"><span class="menu-icon">📄</span> Log File <span class="menu-ext">.log .hrlog .tlog .blog</span></button>
+  <button id="openZip"><span class="menu-icon">📦</span> ZIP File <span class="menu-ext">.zip</span></button>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// fflate - ZIP decompression library (MIT License)
+// https://github.com/101arrowz/fflate
+</script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+<script>
+// ============================================================
+// STATE
+// ============================================================
+let allLogs = [];           // {time:Date, kind:number, content:string, ms:number}
+let filteredIndices = [];    // indices into allLogs of visible items
+let logKinds = new Map();   // kindId -> {name, color, enabled, count}
+let selectedIndices = new Set(); // absolute indices of selected items
+let selectionAnchor = -1;
+let searchTerm = '';
+let searchMatches = [];
+let searchPos = -1;
+let detailIndex = -1;       // index in filteredIndices
+let fontSize = 12;
+let loadCancelled = false;
+let filterPrefixes = { B: '', C: '', D: '' };
+let realtimeTimer = null;
+let currentLogType = 'Type1'; // track current log type for time format & delta calc
+
+// Default log kind mappings per type
+const LOG_KIND_MAPS = {
+  Type1: {1:['Debug','#804000'],2:['Alarm','#ff0000'],3:['System','#00c000'],4:['User','#0080ff'],5:['Process','#0000ff'],6:['Comm','#ff00ff'],8:['Mark Info','#0096c8'],9:['Thread Info','#6e0f96'],10:['Laser Info','#008080'],11:['Cam Info','#ff8040'],12:['Comm Serial','#ff8080'],13:['Align Process','#ff80ff'],14:['Align Result','#ff6496'],15:['Atten Process','#326400'],16:['Atten Result','#3264aa'],17:['PosSens Process','#963280'],18:['PosSens Result','#008080'],40:['IPC Send','#ff00ff'],41:['IPC Recv','#ff00ff'],42:['IO In','#00ae57'],43:['IO Out','#0064c8'],44:['Unit Info','#fa3296'],45:['PLC Process','#0000ff'],46:['PLC System','#00c000'],47:['PLC IO Up In','#c800ff'],48:['PLC IO Up Out','#0064c8'],49:['PLC IO Dn In','#c800ff'],50:['PLC IO Dn Out','#0064c8']},
+  Type2: {0:['UNKNOWN','#000'],1:['SETTING','#20c020'],2:['DEBUG','#606060'],3:['SWDEBUG','#8080e8'],4:['SW_ALARM','#ff4040'],5:['SWDEBUG1','#8080c8'],6:['SWDEBUG2','#8080c0'],7:['SWDEBUG3','#8080b4'],8:['WARNING','#ff6600'],9:['ALARM','#ff0000'],10:['SYSTEM','#008000'],11:['PROCESS','#0000ff'],12:['TACT_TIME','#c080c0'],13:['RESERVE','#808080'],14:['USER','#0080ff'],15:['BUTTON','#6060ff'],16:['COMM','#c00060'],17:['COMMIO','#c06060'],18:['NETWORK','#c08060']},
+  Type3: {0:['Debug','#808080'],1:['SWDebug','#00bfff'],2:['Manager','#c71585'],3:['Library','#9400d3'],4:['Setting','#90ee90'],5:['System','#7cfc00'],6:['Device','#5f9ea0'],7:['Recipe','#008b8b'],8:['Form','#daa520'],9:['User','#f0e68c'],10:['Button','#add8e6'],11:['Comm','#bdb76b'],12:['Network','#ffa500'],13:['Process','#ffffff'],14:['TactTime','#ffc0cb'],15:['Warning','#ff8c00'],16:['Alarm','#ff0000']},
+  Type5: {0:['System','#64b4ff'],1:['Process','#b4ffb4'],2:['Alarm','#ff6464'],3:['Debug','#b4b4b4'],4:['CommIn','#ffc864'],5:['CommOut','#c896ff'],6:['User','#ffff96']},
+  Type6: {0:['Message','#000'],1:['Content','#000']}
+};
+
+// ============================================================
+// PANEL MANAGEMENT
+// ============================================================
+function openPanel(name) {
+  document.getElementById(name + 'Overlay').classList.add('show');
+  document.getElementById(name + 'Panel').classList.add('open');
+}
+function closePanel(name) {
+  document.getElementById(name + 'Overlay').classList.remove('show');
+  document.getElementById(name + 'Panel').classList.remove('open');
+}
+function togglePanel(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('show');
+}
+document.getElementById('filterOverlay').onclick = () => closePanel('filter');
+document.getElementById('kindsOverlay').onclick = () => closePanel('kinds');
+document.getElementById('saveOverlay').onclick = () => closePanel('save');
+
+document.getElementById('btnFilter').onclick = () => openPanel('filter');
+document.getElementById('btnKinds').onclick = () => openPanel('kinds');
+document.getElementById('btnSave').onclick = () => openPanel('save');
+document.getElementById('btnManual').onclick = () => document.getElementById('manualModal').classList.add('show');
+document.getElementById('manualModal').onclick = e => { if(e.target === e.currentTarget) e.currentTarget.classList.remove('show'); };
+
+// ============================================================
+// FILE LOADING
+// ============================================================
+// Open file menu
+function showOpenMenu(anchorEl) {
+  const menu = document.getElementById('openMenu');
+  const rect = anchorEl.getBoundingClientRect();
+  // Position above the button
+  menu.style.left = Math.max(4, rect.left) + 'px';
+  menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+  menu.style.top = 'auto';
+  menu.classList.add('show');
+  // Close on outside tap
+  setTimeout(() => document.addEventListener('pointerdown', closeOpenMenu, { once: true }), 10);
+}
+function closeOpenMenu(e) {
+  const menu = document.getElementById('openMenu');
+  if (e && menu.contains(e.target)) return;
+  menu.classList.remove('show');
+}
+
+document.getElementById('dropZone').onclick = e => showOpenMenu(e.currentTarget);
+document.getElementById('btnOpen').onclick = e => showOpenMenu(e.currentTarget);
+
+document.getElementById('openLog').onclick = () => { closeOpenMenu(); document.getElementById('fileInputLog').click(); };
+document.getElementById('openZip').onclick = () => { closeOpenMenu(); document.getElementById('fileInputZip').click(); };
+
+document.getElementById('dropZone').addEventListener('dragover', e => { e.preventDefault(); e.currentTarget.classList.add('dragover'); });
+document.getElementById('dropZone').addEventListener('dragleave', e => e.currentTarget.classList.remove('dragover'));
+document.getElementById('dropZone').addEventListener('drop', e => { e.preventDefault(); e.currentTarget.classList.remove('dragover'); if(e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]); });
+document.getElementById('fileInputLog').addEventListener('change', e => { if(e.target.files.length) loadFile(e.target.files[0]); e.target.value=''; });
+document.getElementById('fileInputZip').addEventListener('change', e => { if(e.target.files.length) loadFile(e.target.files[0]); e.target.value=''; });
+
+// Also allow drop on viewport
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => { e.preventDefault(); if(e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]); });
+
+const LOG_EXTENSIONS = ['.log', '.hrlog', '.tlog', '.blog'];
+
+async function loadFile(file) {
+  loadCancelled = false;
+  showProgress('Loading: ' + file.name);
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    // Check if ZIP file (PK header: 0x50 0x4B)
+    if (bytes[0] === 0x50 && bytes[1] === 0x4B) {
+      await handleZipFile(bytes, file.name);
+      return;
+    }
+
+    await loadLogBytes(bytes, file.name);
+  } catch(err) {
+    if (!loadCancelled) toast('Error: ' + err.message);
+  }
+  hideProgress();
+}
+
+async function handleZipFile(zipBytes, zipName) {
+  updateProgress(50, 'Extracting ZIP...');
+
+  const unzipped = fflate.unzipSync(zipBytes);
+  const logFiles = Object.keys(unzipped).filter(name => {
+    const ext = name.substring(name.lastIndexOf('.')).toLowerCase();
+    return LOG_EXTENSIONS.includes(ext) && !name.startsWith('__MACOSX');
+  });
+
+  if (logFiles.length === 0) {
+    hideProgress();
+    toast('No log files found in ZIP');
+    return;
+  }
+
+  if (logFiles.length === 1) {
+    await loadLogBytes(unzipped[logFiles[0]], logFiles[0]);
+    return;
+  }
+
+  // Multiple log files — let user pick
+  hideProgress();
+  showZipPicker(unzipped, logFiles, zipName);
+}
+
+function showZipPicker(unzipped, logFiles, zipName) {
+  // Sort by name
+  logFiles.sort();
+  const modal = document.getElementById('manualModal');
+  const content = modal.querySelector('.manual-content');
+  content.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Select log file from ZIP</h3>
+      <button class="icon-btn" onclick="document.getElementById('manualModal').classList.remove('show')">✕</button>
+    </div>
+    <p style="margin:6px 0;color:var(--text-dim);font-size:11px">${zipName} — ${logFiles.length} log files</p>
+    <div style="display:flex;flex-direction:column;gap:4px;margin-top:8px">
+      ${logFiles.map(name => {
+        const size = unzipped[name].byteLength;
+        const sizeStr = size > 1048576 ? (size/1048576).toFixed(1)+'MB' : (size/1024).toFixed(0)+'KB';
+        return `<button onclick="pickZipEntry(this.dataset.name)" data-name="${name.replace(/"/g,'&quot;')}"
+          style="text-align:left;padding:8px 10px;border:1px solid var(--border);border-radius:6px;
+          background:var(--bg);color:var(--text);cursor:pointer;font-size:12px;font-family:var(--font-mono)">
+          ${name.split('/').pop()} <span style="color:var(--text-dim);font-size:10px">${sizeStr}</span>
+        </button>`;
+      }).join('')}
+    </div>`;
+  // Store unzipped data temporarily
+  window._zipData = unzipped;
+  modal.classList.add('show');
+}
+
+async function pickZipEntry(name) {
+  document.getElementById('manualModal').classList.remove('show');
+  showProgress('Loading: ' + name);
+  try {
+    await loadLogBytes(window._zipData[name], name);
+  } catch(err) {
+    toast('Error: ' + err.message);
+  }
+  hideProgress();
+  delete window._zipData;
+}
+
+async function loadLogBytes(bytes, fileName) {
+  const logType = detectLogType(bytes);
+
+  document.getElementById('fileName').textContent = fileName.split('/').pop();
+  allLogs = [];
+  currentLogType = logType;
+
+  const decoder = getDecoder(logType);
+  await decoder(bytes, logType, fileName);
+
+  setupLogKinds(logType);
+
+  // Make container visible BEFORE rendering so clientHeight is valid
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('logContainer').style.display = 'flex';
+
+  const vp = document.getElementById('logViewport');
+  if (logType === 'Type3' || logType === 'Type5') {
+    vp.classList.add('dark-theme');
+    vp.classList.remove('light-theme');
+  } else {
+    vp.classList.add('light-theme');
+    vp.classList.remove('dark-theme');
+  }
+
+  // Apply filters after layout so viewport height is available
+  applyFilters();
+  toast(`Loaded ${allLogs.length} logs (${logType})`);
+  hideProgress();
+}
+
+function detectLogType(bytes) {
+  if (bytes.length < 20) return 'Type4';
+  // Type5: HLOG magic
+  if (bytes[0]===0x48 && bytes[1]===0x4C && bytes[2]===0x4F && bytes[3]===0x47) return 'Type5';
+
+  // Type3: alternating null bytes pattern (UTF-16 LE: low < 0x80, high == 0x00)
+  let isType3 = true;
+  for (let i=0; i<20; i+=2) {
+    if (!(bytes[i] < 0x80 && bytes[i+1] === 0x00)) { isType3 = false; break; }
+  }
+
+  // Type2: bytes[0]=='W' && bytes[2]=='W' && bytes[4]=='I' && bytes[6]=='I'
+  if (bytes[0]===0x57 && bytes[2]===0x57 && bytes[4]===0x49 && bytes[6]===0x49) return 'Type2';
+
+  // Type3: BOM (FF FE) or pattern match
+  if ((bytes[0]===0xFF && bytes[1]===0xFE) || isType3) return 'Type3';
+
+  // Type4: '[' at start, or UTF-8 BOM (EF BB BF) followed by '['
+  if (bytes[0] === 0x5B) return 'Type4';
+  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF && bytes[3]===0x5B) return 'Type4';
+
+  // Type6: YYYY-MM-DD date pattern
+  let startIdx = 0;
+  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) startIdx = 3;
+  if (startIdx + 10 <= bytes.length) {
+    const isDigit = b => b >= 0x30 && b <= 0x39;
+    if (isDigit(bytes[startIdx]) && isDigit(bytes[startIdx+1]) && isDigit(bytes[startIdx+2]) && isDigit(bytes[startIdx+3]) &&
+        bytes[startIdx+4]===0x2D && isDigit(bytes[startIdx+5]) && isDigit(bytes[startIdx+6]) &&
+        bytes[startIdx+7]===0x2D && isDigit(bytes[startIdx+8]) && isDigit(bytes[startIdx+9])) return 'Type6';
+  }
+
+  return 'Type1';
+}
+
+function getDecoder(type) {
+  switch(type) {
+    case 'Type1': return decodeType1;
+    case 'Type2': return decodeType2;
+    case 'Type3': return decodeType3;
+    case 'Type4': return decodeType4;
+    case 'Type5': return decodeType5;
+    case 'Type6': return decodeType6;
+    default: return decodeType4;
+  }
+}
+
+// --- CP949 Decoder (EUC-KR superset) ---
+// Browser's TextDecoder('euc-kr') handles CP949. But for binary log slices,
+// we must use subarray (not slice) and handle the stream option to avoid
+// cutting multi-byte chars. We decode each record individually.
+function decodeCP949(bytes, start, len) {
+  // Use a single-shot decode for each record's text portion
+  try {
+    return new TextDecoder('euc-kr', {fatal:false}).decode(bytes.subarray(start, start + len));
+  } catch(e) {
+    // Fallback: decode as latin1 for non-decodable bytes
+    let s = '';
+    for (let i = start; i < start + len; i++) s += String.fromCharCode(bytes[i]);
+    return s;
+  }
+}
+
+// --- TYPE1 DECODER: Binary with fixed header ---
+// Record: hour(1) + minute(1) + second(1) + millisecond(4) + logKind(1) + textLength(1) + text(N) + separator(1)
+async function decodeType1(bytes) {
+  let i = 0;
+  let count = 0;
+  const totalLen = bytes.length;
+  while (i + 9 <= totalLen) {
+    if (loadCancelled) return;
+    const hour = bytes[i], min = bytes[i+1], sec = bytes[i+2];
+    // uint32 LE millisecond
+    const ms = (bytes[i+3] | (bytes[i+4]<<8) | (bytes[i+5]<<16) | ((bytes[i+6]<<24)>>>0)) >>> 0;
+    const kind = bytes[i+7];
+    const textLen = bytes[i+8];
+    i += 9;
+    if (i + textLen > totalLen) break;
+    const content = decodeCP949(bytes, i, textLen);
+    i += textLen;
+    // Skip separator byte (1 byte after text)
+    if (i < totalLen) i++;
+    const time = new Date(2000,0,1, hour, min, sec, ms % 1000);
+    allLogs.push({time, kind, content, ms});
+    if (++count % 5000 === 0) { updateProgress(i / totalLen * 100, `${count} items...`); await yieldThread(); }
+  }
+}
+
+// --- TYPE2 DECODER: Extended binary ---
+// File header: 1 byte 'W' + 27 bytes skip = 28 bytes
+// Record: hour(1) + min(1) + sec(1) + skip(3) + ms(4) + skip(2) + kind(2) + textLen(1) + text(N) = 15 byte header
+async function decodeType2(bytes) {
+  const totalLen = bytes.length;
+  if (totalLen < 28) return;
+  // Verify first byte is 'W' and skip 28-byte file header
+  if (bytes[0] !== 0x57) return;
+  let i = 28;
+  let count = 0;
+  while (i + 15 <= totalLen) {
+    if (loadCancelled) return;
+    const hour = bytes[i], min = bytes[i+1], sec = bytes[i+2];
+    // skip 3 bytes
+    const ms = (bytes[i+6] | (bytes[i+7]<<8) | (bytes[i+8]<<16) | ((bytes[i+9]<<24)>>>0)) >>> 0;
+    // skip 2 bytes
+    const kind = bytes[i+12] | (bytes[i+13]<<8);
+    const textLen = bytes[i+14];
+    i += 15;
+    if (i + textLen > totalLen) break;
+    const content = decodeCP949(bytes, i, textLen);
+    i += textLen;
+    const time = new Date(2000,0,1, hour, min, sec, ms % 1000);
+    allLogs.push({time, kind, content, ms});
+    if (++count % 5000 === 0) { updateProgress(i / totalLen * 100, `${count} items...`); await yieldThread(); }
+  }
+}
+
+// --- TYPE3 DECODER: UTF-16 LE text ---
+async function decodeType3(bytes) {
+  let start = 0;
+  if (bytes[0]===0xFF && bytes[1]===0xFE) start = 2;
+  const text = new TextDecoder('utf-16le').decode(bytes.slice(start));
+  const lines = text.split(/\r?\n/);
+  let count = 0;
+  // Format: [LogKind][dd/MM/yy-HH:mm:ss:LineIdx]content
+  const re = /^\[(\d+)\]\[(\d{2})\/(\d{2})\/(\d{2})-(\d{2}):(\d{2}):(\d{2}):(\d+)\](.*)$/;
+  for (const line of lines) {
+    if (loadCancelled) return;
+    const m = re.exec(line);
+    if (m) {
+      const kind = parseInt(m[1]);
+      const day = parseInt(m[2]), mon = parseInt(m[3])-1, yr = 2000+parseInt(m[4]);
+      const h = parseInt(m[5]), mi = parseInt(m[6]), s = parseInt(m[7]), lineIdx = parseInt(m[8]);
+      const time = new Date(yr, mon, day, h, mi, s);
+      allLogs.push({time, kind, content: m[9], ms: lineIdx});
+    } else if (line.trim()) {
+      allLogs.push({time: new Date(2000,0,1), kind:0, content: line, ms: 0});
+    }
+    if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+  }
+}
+
+// --- TYPE4 DECODER: CP949 text ---
+// Format: [HH:mm:ss.fff][ignored][NN]content
+// Uses CP949 encoding (detectEncodingFromByteOrderMarks in C#)
+async function decodeType4(bytes) {
+  let start = 0;
+  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) start = 3;
+  // Try euc-kr first (CP949 superset), fallback to utf-8
+  let text;
+  try {
+    text = new TextDecoder('euc-kr', {fatal:false}).decode(bytes.subarray(start));
+  } catch(e) {
+    text = new TextDecoder('utf-8', {fatal:false}).decode(bytes.subarray(start));
+  }
+  const lines = text.split(/\r?\n/);
+  let count = 0;
+  // Full format: [HH:mm:ss.fff][...][NN]content
+  const reFull = /^\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\]\[[^\]]*\]\[(\d{1,3})\s*\](.*)$/;
+  // Simpler format: [HH:mm:ss.fff]content or [HH:mm:ss]content
+  const reSimple1 = /^\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\](.*)$/;
+  const reSimple2 = /^\[(\d{2}):(\d{2}):(\d{2})\](.*)$/;
+  for (const line of lines) {
+    if (loadCancelled) return;
+    let m = reFull.exec(line);
+    if (m) {
+      const h=parseInt(m[1]),mi=parseInt(m[2]),s=parseInt(m[3]),ms=parseInt(m[4]);
+      const kind = parseInt(m[5]);
+      const time = new Date(2000,0,1,h,mi,s,ms);
+      allLogs.push({time, kind, content:m[6].trim(), ms});
+    } else if ((m = reSimple1.exec(line))) {
+      const h=parseInt(m[1]),mi=parseInt(m[2]),s=parseInt(m[3]),ms=parseInt(m[4]);
+      const time = new Date(2000,0,1,h,mi,s,ms);
+      allLogs.push({time, kind:0, content:m[5], ms});
+    } else if ((m = reSimple2.exec(line))) {
+      const h=parseInt(m[1]),mi=parseInt(m[2]),s=parseInt(m[3]);
+      const time = new Date(2000,0,1,h,mi,s);
+      allLogs.push({time, kind:0, content:m[4], ms:0});
+    } else if (line.trim()) {
+      allLogs.push({time: new Date(2000,0,1), kind:0, content:line, ms:0});
+    }
+    if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+  }
+}
+
+// --- TYPE5 DECODER: HRCS binary (HLOG) ---
+// File header: "HLOG"(4) + version(1) + nameLen(1) + name(N) + creationTicks(8)
+// Session marker: 0xFF + ticks(8)
+// Record: typeByte(1) + timeMs(4) + msgLen(2) + msg(N)
+// Messages use dictionary compression: #N:word defines, @N references
+async function decodeType5(bytes, logType, fileName) {
+  const totalLen = bytes.length;
+  const td = new TextDecoder('utf-8', {fatal:false});
+  if (totalLen < 6) return;
+  // Verify HLOG magic
+  if (bytes[0]!==0x48||bytes[1]!==0x4C||bytes[2]!==0x4F||bytes[3]!==0x47) return;
+  let i = 4;
+  const version = bytes[i++];
+  const nameLen = bytes[i++];
+  i += nameLen; // skip program name
+  i += 8; // skip creationTicks (int64)
+
+  // Extract date from filename if possible (format: ProgramName_YYYYMMDD.blog)
+  let fileDate = new Date();
+  if (fileName) {
+    const base = fileName.replace(/\.[^.]+$/, '');
+    const uIdx = base.lastIndexOf('_');
+    if (uIdx >= 0 && base.length >= uIdx + 9) {
+      const ds = base.substring(uIdx+1, uIdx+9);
+      const yr=parseInt(ds.substring(0,4)), mo=parseInt(ds.substring(4,6))-1, dy=parseInt(ds.substring(6,8));
+      if (!isNaN(yr)) fileDate = new Date(yr, mo, dy);
+    }
+  }
+
+  const dict = new Map();
+  let count = 0;
+
+  while (i < totalLen) {
+    if (loadCancelled) return;
+    const typeByte = bytes[i++];
+    // Session marker
+    if (typeByte === 0xFF) {
+      if (i + 8 > totalLen) break;
+      i += 8; // skip session ticks
+      dict.clear();
+      continue;
+    }
+    // Valid LogType 0-6
+    if (typeByte > 6) break;
+    if (i + 6 > totalLen) break;
+    const timeMs = (bytes[i]|(bytes[i+1]<<8)|(bytes[i+2]<<16)|((bytes[i+3]<<24)>>>0))>>>0;
+    const msgLen = bytes[i+4]|(bytes[i+5]<<8);
+    i += 6;
+    if (i + msgLen > totalLen) break;
+    const compressed = td.decode(bytes.subarray(i, i + msgLen));
+    i += msgLen;
+    const message = decompressType5(compressed, dict);
+    const logTime = new Date(fileDate.getTime() + timeMs);
+    allLogs.push({time:logTime, kind:typeByte, content:message, ms:timeMs});
+    if (++count % 5000 === 0) { updateProgress(i/totalLen*100, `${count} items...`); await yieldThread(); }
+  }
+}
+
+function decompressType5(compressed, dict) {
+  let result = '';
+  let i = 0;
+  while (i < compressed.length) {
+    if (compressed[i] === '@') {
+      // Dictionary reference: @N
+      let j = i+1;
+      while (j < compressed.length && compressed[j]>='0' && compressed[j]<='9') j++;
+      if (j > i+1) {
+        const idx = parseInt(compressed.substring(i+1, j));
+        if (dict.has(idx)) result += dict.get(idx);
+      }
+      i = j;
+    } else if (compressed[i] === '#') {
+      // Dictionary definition: #N:word
+      const colonIdx = compressed.indexOf(':', i);
+      if (colonIdx > i+1) {
+        const idx = parseInt(compressed.substring(i+1, colonIdx));
+        if (!isNaN(idx)) {
+          let wordEnd = colonIdx + 1;
+          while (wordEnd < compressed.length) {
+            const c = compressed[wordEnd];
+            if (c === ' ' || c === '@' || c === '#') break;
+            wordEnd++;
+          }
+          const word = compressed.substring(colonIdx+1, wordEnd);
+          dict.set(idx, word);
+          result += word;
+          i = wordEnd;
+          continue;
+        }
+      }
+      result += compressed[i]; i++;
+    } else {
+      result += compressed[i]; i++;
+    }
+  }
+  return result;
+}
+
+// --- TYPE6 DECODER: Tab-separated text with SECS message support ---
+// Format: YYYY-MM-DD\tHH:mm:ss:fff\tcontent  (colon or dot for ms)
+// Continuation lines start with tab/space (reuse previous time & kind)
+// SECS message names (S#F#) extracted for dynamic LogKind mapping
+async function decodeType6(bytes) {
+  let start = 0;
+  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) start = 3;
+  const text = new TextDecoder('utf-8', {fatal:false}).decode(bytes.subarray(start));
+  const lines = text.split(/\r?\n/);
+  let count = 0;
+
+  let lastTime = null, lastMs = 0, lastKind = 0;
+  const secsRe = /\b(S\d+F\d+)\b/i;
+  const type6KindMap = new Map(); // secsName -> kindId
+  let nextKindId = 0;
+  // Predefined palette for dynamic kinds
+  const palette = ['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4','#f032e6',
+    '#bfef45','#fabed4','#469990','#dcbeff','#9A6324','#800000','#aaffc3','#808000','#000075'];
+
+  function getOrCreateKind(secsName) {
+    if (!secsName) return 0;
+    const upper = secsName.toUpperCase();
+    if (type6KindMap.has(upper)) return type6KindMap.get(upper);
+    const id = nextKindId++;
+    type6KindMap.set(upper, id);
+    // Register in logKinds for UI display
+    logKinds.set(id, { name: upper, color: palette[id % palette.length], enabled: true, count: 0 });
+    return id;
+  }
+  // Register default "System" kind
+  getOrCreateKind('System');
+
+  for (const line of lines) {
+    if (loadCancelled) return;
+    if (!line || !line.trim()) { count++; continue; }
+
+    // Continuation line (starts with tab or space)
+    if (line[0] === '\t' || line[0] === ' ') {
+      if (lastTime) {
+        const content = line.replace(/\t/g, ' ');
+        allLogs.push({time: lastTime, kind: lastKind, content, ms: lastMs});
+      }
+      if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+      continue;
+    }
+
+    // Try to parse: YYYY-MM-DD\t...
+    const firstTab = line.indexOf('\t');
+    if (firstTab < 10) {
+      // Parse failed, use previous time
+      if (lastTime) {
+        allLogs.push({time: lastTime, kind: lastKind, content: line.replace(/\t/g,' '), ms: lastMs});
+      }
+      if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+      continue;
+    }
+
+    const datePart = line.substring(0, firstTab);
+    const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+    if (!dm) {
+      if (lastTime) allLogs.push({time: lastTime, kind: lastKind, content: line.replace(/\t/g,' '), ms: lastMs});
+      if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+      continue;
+    }
+    const yr=parseInt(dm[1]), mon=parseInt(dm[2])-1, day=parseInt(dm[3]);
+
+    const afterDate = line.substring(firstTab + 1);
+    const secondTab = afterDate.indexOf('\t');
+
+    let h=0, mi=0, s=0, ms=0, content;
+
+    if (secondTab < 0) {
+      // Only one tab: date\tcontent
+      content = afterDate.replace(/\t/g, ' ');
+      lastTime = new Date(yr, mon, day);
+      lastMs = 0;
+    } else {
+      const timePart = afterDate.substring(0, secondTab);
+      content = afterDate.substring(secondTab + 1).replace(/\t/g, ' ');
+
+      // Parse time: HH:mm:ss:fff or HH:mm:ss.fff or HH:mm:ss
+      const tParts = timePart.split(':');
+      if (tParts.length >= 3) {
+        h = parseInt(tParts[0])||0;
+        mi = parseInt(tParts[1])||0;
+        if (tParts.length === 4) {
+          // HH:mm:ss:fff
+          s = parseInt(tParts[2])||0;
+          ms = parseInt(tParts[3])||0;
+        } else {
+          // HH:mm:ss.fff or HH:mm:ss
+          const dotIdx = tParts[2].indexOf('.');
+          if (dotIdx >= 0) {
+            s = parseInt(tParts[2].substring(0, dotIdx))||0;
+            ms = parseInt(tParts[2].substring(dotIdx+1))||0;
+          } else {
+            s = parseInt(tParts[2])||0;
+          }
+        }
+      }
+      if (h>23||mi>59||s>59||ms>999) { count++; continue; }
+      lastTime = new Date(yr, mon, day, h, mi, s, ms);
+      lastMs = ms;
+    }
+
+    // Extract SECS message name
+    const secsMatch = secsRe.exec(content);
+    const secsName = secsMatch ? secsMatch[1] : null;
+    lastKind = getOrCreateKind(secsName || 'System');
+
+    allLogs.push({time: lastTime, kind: lastKind, content, ms: lastMs});
+    if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+  }
+}
+
+function yieldThread() { return new Promise(r => setTimeout(r, 0)); }
+
+// ============================================================
+// LOG KINDS SETUP
+// ============================================================
+function setupLogKinds(logType) {
+  logKinds.clear();
+  const map = LOG_KIND_MAPS[logType] || {};
+
+  // Count kinds in data
+  const kindCounts = new Map();
+  for (const log of allLogs) {
+    kindCounts.set(log.kind, (kindCounts.get(log.kind)||0) + 1);
+  }
+
+  // Add predefined kinds
+  for (const [id, [name, color]] of Object.entries(map)) {
+    const k = parseInt(id);
+    logKinds.set(k, { name, color, enabled: true, count: kindCounts.get(k)||0 });
+  }
+
+  // Add any unknown kinds found in data
+  for (const [k, c] of kindCounts) {
+    if (!logKinds.has(k)) {
+      const hue = (k * 37) % 360;
+      logKinds.set(k, { name: `Kind ${k}`, color: `hsl(${hue},60%,50%)`, enabled: true, count: c });
+    }
+  }
+
+  renderKindList();
+}
+
+function renderKindList() {
+  const ul = document.getElementById('kindList');
+  ul.innerHTML = '';
+  const sorted = [...logKinds.entries()].sort((a,b) => a[0]-b[0]);
+  for (const [id, info] of sorted) {
+    if (info.count === 0) continue;
+    const li = document.createElement('li');
+    li.innerHTML = `<label><input type="checkbox" ${info.enabled?'checked':''} data-kind="${id}" class="kind-check">
+      <span class="kind-color" style="background:${info.color}"></span>
+      <span class="kind-name">${info.name}</span></label>
+      <span class="kind-count">${info.count}</span>`;
+    ul.appendChild(li);
+  }
+  ul.querySelectorAll('.kind-check').forEach(cb => {
+    cb.addEventListener('change', e => {
+      const k = parseInt(e.target.dataset.kind);
+      logKinds.get(k).enabled = e.target.checked;
+      applyFilters();
+    });
+  });
+}
+
+document.getElementById('kindAll').onclick = () => { logKinds.forEach(v => v.enabled = true); renderKindList(); applyFilters(); };
+document.getElementById('kindNone').onclick = () => { logKinds.forEach(v => v.enabled = false); renderKindList(); applyFilters(); };
+document.getElementById('kindInv').onclick = () => { logKinds.forEach(v => v.enabled = !v.enabled); renderKindList(); applyFilters(); };
+
+// ============================================================
+// FILTER EXPRESSION ENGINE
+// ============================================================
+const TokenType = { Literal:0, And:1, Or:2, Not:3, LBrace:4, RBrace:5, First:6, After:7, Last:8, Before:9 };
+
+function tokenize(input) {
+  const tokens = [];
+  if (!input || !input.trim()) return tokens;
+  let i = 0;
+  while (i < input.length) {
+    // Skip whitespace before operators
+    while (i < input.length && /\s/.test(input[i])) {
+      let p = i;
+      while (p < input.length && /\s/.test(input[p])) p++;
+      if (p < input.length) {
+        const rem = input.substring(p);
+        if (/^(AND |OR |NOT |FIRST |LAST |AFTER |BEFORE |\|\|?|&&?|[!~{}])/i.test(rem)) { i = p; break; }
+      }
+      break;
+    }
+    if (i >= input.length) break;
+    const c = input[i];
+    if (c==='|') { tokens.push({type:TokenType.Or, val: input[i+1]==='|'?'||':'|'}); i += input[i+1]==='|'?2:1; continue; }
+    if (c==='&') { tokens.push({type:TokenType.And, val: input[i+1]==='&'?'&&':'&'}); i += input[i+1]==='&'?2:1; continue; }
+    if (c==='!'||c==='~') { tokens.push({type:TokenType.Not, val:c}); i++; continue; }
+    if (c==='{') { tokens.push({type:TokenType.LBrace}); i++; continue; }
+    if (c==='}') { tokens.push({type:TokenType.RBrace}); i++; continue; }
+    // Quoted literal
+    if (c==='"'||c==='\u201c'||c==='\u201d') {
+      let j = i+1;
+      while (j < input.length && input[j]!=='"' && input[j]!=='\u201c' && input[j]!=='\u201d') j++;
+      tokens.push({type:TokenType.Literal, val: input.substring(i+1, j), quoted:true});
+      i = j < input.length ? j+1 : input.length;
+      continue;
+    }
+    // Operator keywords
+    const rem = input.substring(i);
+    let found = false;
+    for (const [kw, tt] of [['AND',TokenType.And],['OR',TokenType.Or],['NOT',TokenType.Not],
+        ['FIRST',TokenType.First],['AFTER',TokenType.After],['LAST',TokenType.Last],['BEFORE',TokenType.Before]]) {
+      if (rem.length >= kw.length && rem.substring(0, kw.length).toUpperCase() === kw) {
+        const next = rem.length === kw.length ? '' : rem[kw.length];
+        if (!next || /[\s|&!~{}""\u201c\u201d]/.test(next)) {
+          tokens.push({type:tt, val:kw}); i += kw.length; found = true; break;
+        }
+      }
+    }
+    if (found) continue;
+    // Literal: read until operator
+    let start = i;
+    while (i < input.length) {
+      const ch = input[i];
+      if ('|&!~{}""\u201c\u201d'.includes(ch)) break;
+      const ah = input.substring(i);
+      let isOp = false;
+      for (const kw of ['AND','OR','NOT','FIRST','AFTER','LAST','BEFORE']) {
+        if (ah.length >= kw.length && ah.substring(0,kw.length).toUpperCase()===kw) {
+          const nx = ah.length===kw.length?'':ah[kw.length];
+          if (!nx || /[\s|&!~{}""\u201c\u201d]/.test(nx)) { isOp=true; break; }
+        }
+      }
+      if (isOp) break;
+      i++;
+    }
+    const lit = input.substring(start, i).trim();
+    if (lit) tokens.push({type:TokenType.Literal, val:lit, quoted:false});
+  }
+  return tokens;
+}
+
+// AST Parser
+function parseExpression(tokens) {
+  let pos = 0;
+  function parseOr() {
+    let left = parseAnd();
+    while (pos < tokens.length && tokens[pos].type === TokenType.Or) { pos++; const right = parseAnd(); left = {type:'or', left, right}; }
+    return left;
+  }
+  function parseAnd() {
+    let left = parseUnary();
+    while (pos < tokens.length && tokens[pos].type === TokenType.And) { pos++; const right = parseUnary(); left = {type:'and', left, right}; }
+    return left;
+  }
+  function parseUnary() {
+    if (pos < tokens.length && tokens[pos].type === TokenType.Not) { pos++; return {type:'not', child: parseUnary()}; }
+    if (pos < tokens.length && tokens[pos].type === TokenType.First) { return parseFirstAfter(); }
+    if (pos < tokens.length && tokens[pos].type === TokenType.Last) { return parseLastBefore(); }
+    return parsePrimary();
+  }
+  function parseFirstAfter() {
+    pos++; // skip FIRST
+    const target = parsePrimary();
+    if (pos < tokens.length && tokens[pos].type === TokenType.After) { pos++; }
+    const condition = parsePrimary();
+    return {type:'firstAfter', target, condition};
+  }
+  function parseLastBefore() {
+    pos++; // skip LAST
+    const target = parsePrimary();
+    if (pos < tokens.length && tokens[pos].type === TokenType.Before) { pos++; }
+    const condition = parsePrimary();
+    return {type:'lastBefore', target, condition};
+  }
+  function parsePrimary() {
+    if (pos < tokens.length && tokens[pos].type === TokenType.LBrace) {
+      pos++;
+      const node = parseOr();
+      if (pos < tokens.length && tokens[pos].type === TokenType.RBrace) pos++;
+      return node;
+    }
+    if (pos < tokens.length && tokens[pos].type === TokenType.Literal) {
+      const t = tokens[pos]; pos++;
+      return {type:'literal', val:t.val, quoted:!!t.quoted};
+    }
+    // implicit: match everything
+    return {type:'literal', val:'', quoted:false};
+  }
+  if (tokens.length === 0) return null;
+  const result = parseOr();
+  return result;
+}
+
+// Build regex from wildcard pattern
+function wildcardToRegex(pattern, isQuoted) {
+  let inner = pattern;
+  let hasPrefix = inner.startsWith('*'), hasSuffix = inner.endsWith('*');
+  inner = inner.replace(/^\*+/, '').replace(/\*+$/, '');
+  let temp = inner.replace(/\*/g, '\x00').replace(/\?/g, '\x01');
+  if (!isQuoted) temp = temp.replace(/#/g, '\x02');
+  let escaped = temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  escaped = escaped.replace(/\x00/g, '.*?').replace(/\x01/g, '.');
+  if (!isQuoted) escaped = escaped.replace(/\x02/g, '[0-9+.\\-\\s]+');
+  const hasWild = !isQuoted && (/[*?#]/.test(pattern));
+  const core = '(' + escaped + ')';
+  let final = hasWild && (hasPrefix||hasSuffix) ? core : '.*?' + core + '.*?';
+  return new RegExp(final, 'i');
+}
+
+// Evaluate AST node against items, returns Set of matching indices
+function evaluateNode(node, items) {
+  if (!node) return new Set(items.map((_,i)=>i));
+  switch(node.type) {
+    case 'literal': {
+      if (!node.val) return new Set(items.map((_,i)=>i));
+      const hasWild = !node.quoted && /[*?#]/.test(node.val);
+      if (hasWild) {
+        const re = wildcardToRegex(node.val, node.quoted);
+        const s = new Set();
+        for (let i=0;i<items.length;i++) if(re.test(items[i].content)) s.add(i);
+        return s;
+      } else {
+        const lower = node.val.toLowerCase();
+        const s = new Set();
+        for (let i=0;i<items.length;i++) if(items[i].content.toLowerCase().includes(lower)) s.add(i);
+        return s;
+      }
+    }
+    case 'and': { const l=evaluateNode(node.left,items), r=evaluateNode(node.right,items); const s=new Set(); for(const i of l) if(r.has(i)) s.add(i); return s; }
+    case 'or': { const l=evaluateNode(node.left,items), r=evaluateNode(node.right,items); for(const i of r) l.add(i); return l; }
+    case 'not': { const c=evaluateNode(node.child,items); const s=new Set(); for(let i=0;i<items.length;i++) if(!c.has(i)) s.add(i); return s; }
+    case 'firstAfter': {
+      const tgt=evaluateNode(node.target,items), cond=evaluateNode(node.condition,items);
+      const s=new Set();
+      let condMet=false;
+      for(let i=0;i<items.length;i++){
+        if(cond.has(i)) condMet=true;
+        if(condMet && tgt.has(i)){ s.add(i); condMet=false; }
+      }
+      return s;
+    }
+    case 'lastBefore': {
+      const tgt=evaluateNode(node.target,items), cond=evaluateNode(node.condition,items);
+      const s=new Set(); let lastTgt=-1;
+      for(let i=0;i<items.length;i++){
+        if(tgt.has(i)) lastTgt=i;
+        if(cond.has(i) && lastTgt>=0){ s.add(lastTgt); lastTgt=-1; }
+      }
+      return s;
+    }
+  }
+  return new Set();
+}
+
+// Collect highlight terms from AST
+function collectTerms(node) {
+  if(!node) return [];
+  switch(node.type) {
+    case 'literal': return node.val ? [node.val] : [];
+    case 'and': case 'or': return [...collectTerms(node.left), ...collectTerms(node.right)];
+    case 'not': return collectTerms(node.child);
+    case 'firstAfter': return [...collectTerms(node.target), ...collectTerms(node.condition)];
+    case 'lastBefore': return [...collectTerms(node.target), ...collectTerms(node.condition)];
+  }
+  return [];
+}
+
+// Check if single item matches a node
+function matchesSingle(node, item) {
+  if(!node) return true;
+  switch(node.type) {
+    case 'literal': {
+      if(!node.val) return true;
+      if(!node.quoted && /[*?#]/.test(node.val)) return wildcardToRegex(node.val, node.quoted).test(item.content);
+      return item.content.toLowerCase().includes(node.val.toLowerCase());
+    }
+    case 'and': return matchesSingle(node.left,item) && matchesSingle(node.right,item);
+    case 'or': return matchesSingle(node.left,item) || matchesSingle(node.right,item);
+    case 'not': return !matchesSingle(node.child,item);
+    default: return true;
+  }
+}
+
+// ============================================================
+// FILTER APPLICATION
+// ============================================================
+function applyFilters() {
+  const filters = [
+    { id:'A', enabled: document.getElementById('filterACheck').checked, expr: document.getElementById('filterA').value, prefix:'' },
+    { id:'B', enabled: document.getElementById('filterBCheck').checked, expr: document.getElementById('filterB').value, prefix: filterPrefixes.B },
+    { id:'C', enabled: document.getElementById('filterCCheck').checked, expr: document.getElementById('filterC').value, prefix: filterPrefixes.C },
+    { id:'D', enabled: document.getElementById('filterDCheck').checked, expr: document.getElementById('filterD').value, prefix: filterPrefixes.D },
+  ];
+
+  // Parse each filter
+  const parsedFilters = [];
+  for (const f of filters) {
+    if (!f.enabled || !f.expr.trim()) { parsedFilters.push(null); continue; }
+    const tokens = tokenize(f.expr);
+    const ast = parseExpression(tokens);
+    parsedFilters.push(ast);
+  }
+
+  // Evaluate on all logs
+  const matchSets = parsedFilters.map(ast => ast ? evaluateNode(ast, allLogs) : null);
+
+  // Combine filters with prefix operators
+  let combined = null;
+  const filterBits = [1, 2, 4, 8]; // A=1, B=2, C=4, D=8
+
+  // Reset matched filters
+  for (let i=0; i<allLogs.length; i++) allLogs[i].matchedFilters = 0;
+
+  // Mark individual filter matches
+  for (let f=0; f<4; f++) {
+    if (matchSets[f]) {
+      for (const idx of matchSets[f]) {
+        allLogs[idx].matchedFilters |= filterBits[f];
+      }
+    }
+  }
+
+  // Combine with prefix logic
+  const prefixes = ['', filterPrefixes.B, filterPrefixes.C, filterPrefixes.D];
+  for (let f=0; f<4; f++) {
+    if (!matchSets[f]) continue;
+    if (combined === null) { combined = matchSets[f]; continue; }
+    const prefix = prefixes[f];
+    if (prefix === 'AND') {
+      const s = new Set();
+      for (const i of combined) if (matchSets[f].has(i)) s.add(i);
+      combined = s;
+    } else if (prefix === 'OR') {
+      for (const i of matchSets[f]) combined.add(i);
+    } else if (prefix === 'NOT') {
+      const s = new Set();
+      for (const i of combined) if (!matchSets[f].has(i)) s.add(i);
+      combined = s;
+    } else {
+      // Default AND for no prefix
+      const s = new Set();
+      for (const i of combined) if (matchSets[f].has(i)) s.add(i);
+      combined = s;
+    }
+  }
+
+  // Build filtered indices (respecting log kind visibility)
+  filteredIndices = [];
+  for (let i=0; i<allLogs.length; i++) {
+    const log = allLogs[i];
+    const kindInfo = logKinds.get(log.kind);
+    if (kindInfo && !kindInfo.enabled) continue;
+    if (combined && !combined.has(i)) continue;
+    filteredIndices.push(i);
+  }
+
+  selectedIndices.clear();
+  updateCount();
+  renderLogs();
+}
+
+function updateCount() {
+  document.getElementById('logCount').textContent = allLogs.length > 0 ? `${filteredIndices.length}/${allLogs.length}` : '';
+}
+
+// ============================================================
+// LOG RENDERING (DOM-pool Virtual Scroll — zero flicker)
+// ============================================================
+// Fixed pool of DOM elements. On scroll, we update text/attributes
+// of existing elements — never create or destroy during scroll.
+// ============================================================
+let lineHeight = 0;
+let renderedRange = { start: -1, end: -1 };
+let cachedHlTerms = null;
+let cachedDeltas = [];
+let poolSize = 0;
+let poolLines = [];   // array of {el, prefixEl, contentEl}
+let useMsTime = false;
+
+function precomputeDeltas() {
+  cachedDeltas = new Array(filteredIndices.length);
+  let prevLog = null;
+  for (let fi = 0; fi < filteredIndices.length; fi++) {
+    const log = allLogs[filteredIndices[fi]];
+    let delta = 0;
+    if (prevLog) {
+      if (currentLogType === 'Type4') {
+        delta = Math.abs(log.time - prevLog.time);
+      } else if (currentLogType === 'Type5' || currentLogType === 'Type6') {
+        delta = (log.time.getTime() + (log.ms||0)) - (prevLog.time.getTime() + (prevLog.ms||0));
+      } else {
+        delta = (log.ms||0) - (prevLog.ms||0);
+      }
+      delta = Math.min(Math.abs(delta), 99999999);
+    }
+    cachedDeltas[fi] = delta;
+    prevLog = log;
+  }
+}
+
+function buildHlTerms() {
+  const hlTerms = [];
+  const ids = ['filterA','filterB','filterC','filterD'];
+  const checks = ['filterACheck','filterBCheck','filterCCheck','filterDCheck'];
+  for (let f = 0; f < 4; f++) {
+    const enabled = document.getElementById(checks[f]).checked;
+    const expr = document.getElementById(ids[f]).value;
+    if (enabled && expr.trim()) {
+      hlTerms.push(collectTerms(parseExpression(tokenize(expr))));
+    } else {
+      hlTerms.push([]);
+    }
+  }
+  cachedHlTerms = hlTerms;
+}
+
+function measureLineHeight() {
+  const vp = document.getElementById('logViewport');
+  const test = document.createElement('div');
+  test.className = 'log-line';
+  test.style.visibility = 'hidden';
+  test.style.position = 'absolute';
+  test.innerHTML = '<span class="log-prefix">00:00:00[       0] </span><span class="log-content">X</span>';
+  vp.appendChild(test);
+  lineHeight = test.getBoundingClientRect().height || (fontSize * 1.5);
+  vp.removeChild(test);
+}
+
+// Create the fixed pool of DOM line elements
+function createPool() {
+  const vp = document.getElementById('logViewport');
+  const vpHeight = vp.clientHeight || 600;
+  const visibleCount = Math.ceil(vpHeight / (lineHeight || 18));
+  const newPoolSize = visibleCount + 60; // large buffer
+
+  const layer = document.getElementById('logContentLayer');
+
+  if (poolSize === newPoolSize) return;
+
+  layer.innerHTML = '';
+  poolLines = [];
+  for (let i = 0; i < newPoolSize; i++) {
+    const el = document.createElement('div');
+    el.className = 'log-line';
+    el.style.visibility = 'hidden';
+    const prefixEl = document.createElement('span');
+    prefixEl.className = 'log-prefix';
+    const contentEl = document.createElement('span');
+    contentEl.className = 'log-content';
+    el.appendChild(prefixEl);
+    el.appendChild(contentEl);
+    layer.appendChild(el);
+    poolLines.push({ el, prefixEl, contentEl });
+  }
+  poolSize = newPoolSize;
+}
+
+function renderLogs() {
+  measureLineHeight();
+  buildHlTerms();
+  precomputeDeltas();
+  useMsTime = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
+  renderedRange = { start: -1, end: -1 };
+
+  const layer = document.getElementById('logContentLayer');
+  layer.style.paddingTop = '0px';
+  layer.style.paddingBottom = '0px';
+
+  createPool();
+
+  // Hide all pool lines first (important when filtered result is 0)
+  for (const p of poolLines) p.el.style.visibility = 'hidden';
+
+  const vp = document.getElementById('logViewport');
+  vp.scrollTop = 0;
+  renderVisibleLines();
+}
+
+function getContentHTML(fi) {
+  const absIdx = filteredIndices[fi];
+  const log = allLogs[absIdx];
+  let html = escapeHtml(log.content);
+
+  const hlTerms = cachedHlTerms || [[], [], [], []];
+  const hlClasses = ['hl-a', 'hl-b', 'hl-c', 'hl-d'];
+  const mf = log.matchedFilters || 0;
+  for (let f = 0; f < 4; f++) {
+    if (!(mf & (1 << f)) || !hlTerms[f].length) continue;
+    for (const term of hlTerms[f]) {
+      if (!term) continue;
+      if (/[*?#]/.test(term)) {
+        try {
+          const re = wildcardToRegex(term, false);
+          html = html.replace(re, (m, g1) => `<span class="${hlClasses[f]}">${g1 || m}</span>`);
+        } catch (e) { }
+      } else {
+        const re = new RegExp('(' + escapeRegex(escapeHtml(term)) + ')', 'gi');
+        html = html.replace(re, `<span class="${hlClasses[f]}">$1</span>`);
+      }
+    }
+  }
+  if (searchTerm) {
+    const re = new RegExp('(' + escapeRegex(escapeHtml(searchTerm)) + ')', 'gi');
+    html = html.replace(re, '<span class="hl-search">$1</span>');
+  }
+  return html;
+}
+
+function renderVisibleLines() {
+  const vp = document.getElementById('logViewport');
+  const layer = document.getElementById('logContentLayer');
+  const vpHeight = vp.clientHeight;
+  const scrollTop = vp.scrollTop;
+  const total = filteredIndices.length;
+
+  if (!lineHeight || !total || !poolSize) return;
+
+  const halfPool = Math.floor(poolSize / 2);
+  const centerFi = Math.floor(scrollTop / lineHeight) + Math.floor(vpHeight / lineHeight / 2);
+  const startFi = Math.max(0, centerFi - halfPool);
+  const endFi = Math.min(total, startFi + poolSize);
+  const actualStart = endFi - startFi < poolSize ? Math.max(0, endFi - poolSize) : startFi;
+
+  if (actualStart === renderedRange.start && endFi === renderedRange.end) return;
+
+  // Update pool elements in-place (no DOM create/destroy)
+  const count = endFi - actualStart;
+  for (let i = 0; i < poolSize; i++) {
+    const p = poolLines[i];
+    if (i < count) {
+      const fi = actualStart + i;
+      const absIdx = filteredIndices[fi];
+      const log = allLogs[absIdx];
+
+      const timeStr = formatTime(log.time, useMsTime);
+      const delta = cachedDeltas[fi] || 0;
+      p.prefixEl.textContent = `${timeStr}[${String(delta).padStart(8)}] `;
+
+      const kindInfo = logKinds.get(log.kind);
+      p.contentEl.style.color = kindInfo ? kindInfo.color : '';
+
+      const hasHighlight = (log.matchedFilters > 0 && cachedHlTerms && cachedHlTerms.some(t => t.length > 0)) || searchTerm;
+      if (hasHighlight) {
+        p.contentEl.innerHTML = getContentHTML(fi);
+      } else {
+        p.contentEl.textContent = log.content;
+      }
+
+      p.el.dataset.fi = fi;
+      p.el.dataset.abs = absIdx;
+      p.el.className = 'log-line' + (selectedIndices.has(absIdx) ? ' selected' : '');
+      p.el.style.visibility = '';
+    } else {
+      p.el.style.visibility = 'hidden';
+    }
+  }
+
+  // Padding for scroll height
+  const padTop = actualStart * lineHeight;
+  const padBottom = Math.max(0, (total - endFi) * lineHeight);
+  layer.style.paddingTop = padTop + 'px';
+  layer.style.paddingBottom = padBottom + 'px';
+
+  renderedRange = { start: actualStart, end: endFi };
+}
+
+document.getElementById('logViewport').addEventListener('scroll', renderVisibleLines, { passive: true });
+
+// ============================================================
+// DRAG SCROLL + INERTIA (matches C# LogDisplayControl)
+// ============================================================
+{
+  const vp = document.getElementById('logViewport');
+  let dragPending = false;
+  let isDragging = false;
+  let dragStartY = 0;
+  let dragStartScroll = 0;
+  let lastDragTime = 0;
+  let lastDragScroll = 0;
+  let velocityHistory = [];
+  let scrollVelocity = 0;
+  let inertiaRaf = 0;
+  let inertiaStart = 0;
+  let initialVelocity = 0;
+  const MAX_VELOCITY = 50;       // px/ms cap
+  const VELOCITY_THRESHOLD = 0.02; // minimum to start inertia
+  const INERTIA_DURATION = 3000;  // ms
+
+  function stopInertia() {
+    if (inertiaRaf) { cancelAnimationFrame(inertiaRaf); inertiaRaf = 0; }
+  }
+
+  function inertiaStep(now) {
+    const elapsed = now - inertiaStart;
+    const progress = elapsed / INERTIA_DURATION;
+    if (progress >= 1.0 || Math.abs(scrollVelocity) <= VELOCITY_THRESHOLD) {
+      stopInertia(); return;
+    }
+    // Ease-out: quadratic deceleration
+    const easeOut = 1.0 - (1.0 - progress) * (1.0 - progress);
+    scrollVelocity = initialVelocity * (1.0 - easeOut);
+    vp.scrollTop += scrollVelocity * 16;
+    inertiaRaf = requestAnimationFrame(inertiaStep);
+  }
+
+  function startInertia(vel) {
+    initialVelocity = vel;
+    scrollVelocity = vel;
+    inertiaStart = performance.now();
+    inertiaRaf = requestAnimationFrame(inertiaStep);
+  }
+
+  // Pointer events for both mouse and touch
+  let dragPointerId = -1;
+
+  vp.addEventListener('pointerdown', e => {
+    // Only left mouse button or touch
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    stopInertia();
+    dragPending = true;
+    isDragging = false;
+    dragPointerId = e.pointerId;
+    dragStartY = e.clientY;
+    dragStartScroll = vp.scrollTop;
+    lastDragTime = performance.now();
+    lastDragScroll = vp.scrollTop;
+    velocityHistory = [];
+    scrollVelocity = 0;
+    // Don't setPointerCapture here — it blocks click events
+  });
+
+  vp.addEventListener('pointermove', e => {
+    if (!dragPending && !isDragging) return;
+    const deltaY = e.clientY - dragStartY;
+
+    // Require minimum 5px movement to start drag
+    if (dragPending && Math.abs(deltaY) < 5) return;
+
+    if (dragPending) {
+      dragPending = false;
+      isDragging = true;
+      // Capture only when actual drag starts
+      try { vp.setPointerCapture(dragPointerId); } catch(ex) {}
+    }
+
+    // Scroll by drag delta
+    const newScroll = dragStartScroll - deltaY;
+    vp.scrollTop = newScroll;
+
+    // Track velocity (average of last 2 samples)
+    const now = performance.now();
+    const dt = now - lastDragTime;
+    if (dt > 0) {
+      let instantV = (vp.scrollTop - lastDragScroll) / dt;
+      instantV = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, instantV));
+      velocityHistory.push(instantV);
+      if (velocityHistory.length > 3) velocityHistory.shift();
+      scrollVelocity = velocityHistory.reduce((a, b) => a + b, 0) / velocityHistory.length;
+    }
+    lastDragScroll = vp.scrollTop;
+    lastDragTime = now;
+  });
+
+  vp.addEventListener('pointerup', e => {
+    if (isDragging) {
+      if (Math.abs(scrollVelocity) > VELOCITY_THRESHOLD) {
+        startInertia(scrollVelocity);
+      }
+      try { vp.releasePointerCapture(e.pointerId); } catch(ex) {}
+    }
+    isDragging = false;
+    dragPending = false;
+  });
+
+  vp.addEventListener('pointercancel', e => {
+    isDragging = false;
+    dragPending = false;
+  });
+
+  // Stop inertia on wheel or touch
+  vp.addEventListener('wheel', () => stopInertia(), { passive: true });
+}
+
+// Time format: C# uses HH:mm:ss for Type1/2/3, HH:mm:ss.fff for Type4/5/6
+function formatTime(dt, withMs) {
+  const h = String(dt.getHours()).padStart(2,'0');
+  const m = String(dt.getMinutes()).padStart(2,'0');
+  const s = String(dt.getSeconds()).padStart(2,'0');
+  if (withMs) {
+    const ms = String(dt.getMilliseconds()).padStart(3,'0');
+    return `${h}:${m}:${s}.${ms}`;
+  }
+  return `${h}:${m}:${s}`;
+}
+
+function formatDelta(ms) {
+  if (ms > 99999999) return '99999999';
+  if (ms === 0) return '       0';
+  return String(ms).padStart(8);
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ============================================================
+// SELECTION MODE (mobile-friendly: long-press to enter)
+// ============================================================
+let selectMode = false;
+let longPressTimer = null;
+let longPressFi = -1;
+let longPressConsumed = false; // prevents tap after long-press
+
+function enterSelectMode(fi) {
+  selectMode = true;
+  document.getElementById('selectBar').classList.add('show');
+  if (fi >= 0) {
+    const absIdx = filteredIndices[fi];
+    selectedIndices.add(absIdx);
+    selectionAnchor = absIdx;
+  }
+  updateSelection();
+  updateSelCount();
+}
+
+function exitSelectMode() {
+  selectMode = false;
+  selectedIndices.clear();
+  selectionAnchor = -1;
+  document.getElementById('selectBar').classList.remove('show');
+  updateSelection();
+}
+
+function updateSelCount() {
+  document.getElementById('selCount').textContent = `${selectedIndices.size} selected`;
+}
+
+function updateSelection() {
+  for (const p of poolLines) {
+    if (p.el.style.visibility === 'hidden') continue;
+    const abs = parseInt(p.el.dataset.abs);
+    p.el.classList.toggle('selected', selectedIndices.has(abs));
+  }
+}
+
+// Select bar buttons
+document.getElementById('selClose').onclick = exitSelectMode;
+document.getElementById('selAll').onclick = () => {
+  selectedIndices.clear();
+  for (const i of filteredIndices) selectedIndices.add(i);
+  updateSelection();
+  updateSelCount();
+};
+document.getElementById('selCopy').onclick = () => {
+  if (selectedIndices.size === 0) { toast('No selection'); return; }
+  const useMsT = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
+  const sorted = [...selectedIndices].sort((a, b) => a - b);
+  const lines = sorted.map(i => {
+    const log = allLogs[i];
+    return `[${formatTime(log.time, useMsT)}][${String(log.kind).padStart(2, '0')}]${log.content}`;
+  });
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
+    toast(`Copied ${lines.length} lines`);
+    exitSelectMode();
+  });
+};
+
+// Long-press detection on viewport (enters select mode)
+{
+  const vp = document.getElementById('logViewport');
+
+  vp.addEventListener('pointerdown', e => {
+    const line = e.target.closest('.log-line');
+    if (!line) return;
+    longPressFi = parseInt(line.dataset.fi);
+    longPressConsumed = false;
+    longPressTimer = setTimeout(() => {
+      longPressConsumed = true;
+      if (!selectMode) {
+        enterSelectMode(longPressFi);
+      } else {
+        // In select mode: long-press = range select from anchor
+        const targetAbs = filteredIndices[longPressFi];
+        if (selectionAnchor >= 0) {
+          const anchorFi = filteredIndices.indexOf(selectionAnchor);
+          if (anchorFi >= 0) {
+            const start = Math.min(anchorFi, longPressFi);
+            const end = Math.max(anchorFi, longPressFi);
+            for (let i = start; i <= end; i++) selectedIndices.add(filteredIndices[i]);
+          }
+        }
+        updateSelection();
+        updateSelCount();
+      }
+      // Vibrate feedback if available
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, 500);
+  }, true);
+
+  vp.addEventListener('pointermove', () => {
+    clearTimeout(longPressTimer);
+  }, true);
+
+  vp.addEventListener('pointerup', () => {
+    clearTimeout(longPressTimer);
+  }, true);
+
+  vp.addEventListener('pointercancel', () => {
+    clearTimeout(longPressTimer);
+  }, true);
+}
+
+// Tap in select mode = toggle; Tap outside select mode = detail on double-tap
+{
+  const vp = document.getElementById('logViewport');
+  let lastTapTime = 0;
+  let lastTapFi = -1;
+
+  vp.addEventListener('click', e => {
+    if (longPressConsumed) { longPressConsumed = false; return; }
+    const line = e.target.closest('.log-line');
+    if (!line) return;
+    const fi = parseInt(line.dataset.fi);
+    const absIdx = parseInt(line.dataset.abs);
+
+    if (selectMode) {
+      // Toggle this line
+      if (selectedIndices.has(absIdx)) {
+        selectedIndices.delete(absIdx);
+      } else {
+        selectedIndices.add(absIdx);
+        selectionAnchor = absIdx;
+      }
+      updateSelection();
+      updateSelCount();
+      // Auto-exit if nothing selected
+      if (selectedIndices.size === 0) exitSelectMode();
+      return;
+    }
+
+    // Not in select mode: double-tap for detail
+    const now = Date.now();
+    if (fi === lastTapFi && now - lastTapTime < 400) {
+      showDetail(fi);
+      lastTapFi = -1;
+    } else {
+      lastTapFi = fi;
+      lastTapTime = now;
+    }
+  });
+}
+
+// ============================================================
+// DETAIL MODAL
+// ============================================================
+function showDetail(fi) {
+  detailIndex = fi;
+  const absIdx = filteredIndices[fi];
+  const log = allLogs[absIdx];
+  const kindInfo = logKinds.get(log.kind);
+  const useMsTime = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
+  document.getElementById('detailTime').textContent = formatTime(log.time, useMsTime);
+  document.getElementById('detailKind').textContent = kindInfo ? `[${log.kind}] ${kindInfo.name}` : `[${log.kind}]`;
+  document.getElementById('detailBody').textContent = log.content;
+  document.getElementById('detailModal').classList.add('show');
+}
+function closeDetail() { document.getElementById('detailModal').classList.remove('show'); }
+document.getElementById('detailPrev').onclick = () => { if(detailIndex>0) showDetail(detailIndex-1); };
+document.getElementById('detailNext').onclick = () => { if(detailIndex<filteredIndices.length-1) showDetail(detailIndex+1); };
+document.getElementById('detailModal').onclick = e => { if(e.target === e.currentTarget) closeDetail(); };
+
+// ============================================================
+// SEARCH
+// ============================================================
+document.getElementById('btnSearch').onclick = () => {
+  const bar = document.getElementById('searchBar');
+  bar.classList.toggle('show');
+  document.getElementById('timeJumpBar').classList.remove('show');
+  if (bar.classList.contains('show')) document.getElementById('searchInput').focus();
+};
+
+function closeSearch() {
+  document.getElementById('searchBar').classList.remove('show');
+  searchTerm = ''; searchMatches = []; searchPos = -1;
+  document.getElementById('searchInfo').textContent = '';
+  renderLogs();
+}
+
+document.getElementById('searchInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.shiftKey ? searchPrevMatch() : searchNextMatch(); }
+  if (e.key === 'Escape') closeSearch();
+});
+
+document.getElementById('searchNext').onclick = searchNextMatch;
+document.getElementById('searchPrev').onclick = searchPrevMatch;
+
+function buildSearchMatches() {
+  const term = document.getElementById('searchInput').value;
+  if (!term) { searchTerm=''; searchMatches=[]; return; }
+  searchTerm = term;
+  const lower = term.toLowerCase();
+  searchMatches = [];
+  for (let fi=0; fi<filteredIndices.length; fi++) {
+    if (allLogs[filteredIndices[fi]].content.toLowerCase().includes(lower)) searchMatches.push(fi);
+  }
+  renderLogs();
+}
+
+function searchNextMatch() {
+  buildSearchMatches();
+  if (!searchMatches.length) { document.getElementById('searchInfo').textContent = '0/0'; return; }
+  searchPos = searchPos < searchMatches.length-1 ? searchPos+1 : 0;
+  scrollToFiltered(searchMatches[searchPos]);
+  document.getElementById('searchInfo').textContent = `${searchPos+1}/${searchMatches.length}`;
+}
+
+function searchPrevMatch() {
+  buildSearchMatches();
+  if (!searchMatches.length) { document.getElementById('searchInfo').textContent = '0/0'; return; }
+  searchPos = searchPos > 0 ? searchPos-1 : searchMatches.length-1;
+  scrollToFiltered(searchMatches[searchPos]);
+  document.getElementById('searchInfo').textContent = `${searchPos+1}/${searchMatches.length}`;
+}
+
+function scrollToFiltered(fi) {
+  if (fi < 0 || fi >= filteredIndices.length) return;
+  const vp = document.getElementById('logViewport');
+  // Scroll so the target line is centered in the viewport
+  const targetTop = fi * lineHeight;
+  vp.scrollTop = targetTop - vp.clientHeight / 2 + lineHeight / 2;
+  // After scroll + render, flash highlight the line
+  requestAnimationFrame(() => {
+    renderVisibleLines();
+    requestAnimationFrame(() => {
+      const layer = document.getElementById('logContentLayer');
+      const lines = layer.querySelectorAll('.log-line');
+      for (const line of lines) {
+        if (parseInt(line.dataset.fi) === fi) {
+          line.style.background = 'rgba(255,200,0,0.3)';
+          setTimeout(() => { line.style.background = ''; updateSelection(); }, 600);
+          break;
+        }
+      }
+    });
+  });
+}
+
+// ============================================================
+// TIME JUMP
+// ============================================================
+document.getElementById('btnTime').onclick = () => {
+  const bar = document.getElementById('timeJumpBar');
+  bar.classList.toggle('show');
+  document.getElementById('searchBar').classList.remove('show');
+  if (bar.classList.contains('show')) document.getElementById('timeJumpInput').focus();
+};
+
+function closeTimeJump() { document.getElementById('timeJumpBar').classList.remove('show'); }
+
+document.getElementById('timeJumpGo').onclick = doTimeJump;
+document.getElementById('timeJumpInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doTimeJump();
+  if (e.key === 'Escape') closeTimeJump();
+});
+
+function doTimeJump() {
+  const val = document.getElementById('timeJumpInput').value.trim();
+  const m = /^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/.exec(val);
+  if (!m) { toast('Format: HH:mm:ss or HH:mm:ss.fff'); return; }
+  const target = new Date(2000,0,1, parseInt(m[1]), parseInt(m[2]), parseInt(m[3]), m[4]?parseInt(m[4]):0);
+  // Find first filtered log >= target time
+  for (let fi=0; fi<filteredIndices.length; fi++) {
+    if (allLogs[filteredIndices[fi]].time >= target) {
+      scrollToFiltered(fi);
+      closeTimeJump();
+      return;
+    }
+  }
+  toast('No log found at or after that time');
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+document.getElementById('btnHome').onclick = () => {
+  const vp = document.getElementById('logViewport');
+  vp.scrollTop = 0;
+};
+document.getElementById('btnEnd').onclick = () => {
+  const vp = document.getElementById('logViewport');
+  vp.scrollTop = vp.scrollHeight;
+};
+
+// ============================================================
+// COPY
+// ============================================================
+document.getElementById('btnCopy').onclick = () => {
+  if (selectedIndices.size > 0) {
+    // Copy current selection
+    document.getElementById('selCopy').click();
+  } else {
+    // Enter select mode
+    enterSelectMode(-1);
+    toast('Long-press to select lines');
+  }
+};
+
+// ============================================================
+// EXPORT
+// ============================================================
+document.getElementById('exportBtn').onclick = () => {
+  const mode = document.querySelector('input[name=saveMode]:checked').value;
+  let lines = [];
+  const indices = mode === 'all' ? filteredIndices :
+    mode === 'filter' ? filteredIndices.filter(i => allLogs[i].matchedFilters > 0) :
+    filteredIndices.filter(i => allLogs[i].matchedFilters > 0);
+
+  let prevTime = null;
+  for (const i of indices) {
+    const log = allLogs[i];
+    const delta = prevTime ? Math.min(Math.abs(log.time - prevTime), 99999999) : 0;
+    const deltaStr = String(delta).padStart(8);
+    let content = log.content;
+    if (mode === 'highlight') {
+      // Extract highlight terms
+      const terms = [];
+      for (let f=0; f<4; f++) {
+        if (!(log.matchedFilters & (1<<f))) continue;
+        const expr = document.getElementById(['filterA','filterB','filterC','filterD'][f]).value;
+        if (!expr.trim()) continue;
+        const ast = parseExpression(tokenize(expr));
+        terms.push(...collectTerms(ast));
+      }
+      if (terms.length) {
+        const excerpts = [];
+        for (const t of terms) {
+          const idx = content.toLowerCase().indexOf(t.toLowerCase());
+          if (idx >= 0) {
+            const start = Math.max(0, idx-10);
+            const end = Math.min(content.length, idx+t.length+10);
+            excerpts.push(content.substring(start, end));
+          }
+        }
+        content = excerpts.length ? excerpts.join(' ... ') : content;
+      }
+    }
+    const useMsE = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
+    lines.push(`[${formatTime(log.time,useMsE)}][${deltaStr}][${String(log.kind).padStart(2,'0')}]${content}`);
+    prevTime = log.time;
+  }
+
+  const blob = new Blob([lines.join('\n')], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'export.txt'; a.click();
+  URL.revokeObjectURL(url);
+  closePanel('save');
+  toast(`Exported ${lines.length} lines`);
+};
+
+// ============================================================
+// FONT FAMILY & SIZE
+// ============================================================
+document.getElementById('btnFont').onclick = () => togglePanel('fontSizeCtrl');
+document.getElementById('fontInc').onclick = () => changeFontSize(1);
+document.getElementById('fontDec').onclick = () => changeFontSize(-1);
+
+// Populate monospace font list
+(function initFontSelector() {
+  const select = document.getElementById('fontFamily');
+  // Well-known monospace fonts — browser will skip unavailable ones
+  const monoFonts = [
+    'Cascadia Code', 'Cascadia Mono',
+    'Consolas',
+    'Courier New',
+    'DejaVu Sans Mono',
+    'Fira Code', 'Fira Mono',
+    'Inconsolata',
+    'JetBrains Mono',
+    'Liberation Mono',
+    'Lucida Console',
+    'Menlo',
+    'Monaco',
+    'Noto Sans Mono',
+    'Roboto Mono',
+    'SF Mono',
+    'Source Code Pro',
+    'Ubuntu Mono',
+    'D2Coding',
+    'NanumGothicCoding',
+  ];
+
+  // Detect which fonts are available by measuring character width
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const testStr = 'MWMWMWMW1234567890';
+  ctx.font = '16px monospace';
+  const fallbackWidth = ctx.measureText(testStr).width;
+
+  const available = [];
+  for (const font of monoFonts) {
+    ctx.font = `16px "${font}", monospace`;
+    const w = ctx.measureText(testStr).width;
+    if (w !== fallbackWidth) {
+      available.push(font);
+    }
+  }
+  // Always include generic monospace
+  available.push('monospace');
+
+  for (const font of available) {
+    const opt = document.createElement('option');
+    opt.value = font;
+    opt.textContent = font;
+    opt.style.fontFamily = `"${font}", monospace`;
+    select.appendChild(opt);
+  }
+
+  // Set default: try to match current CSS variable
+  const currentFont = getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim();
+  const defaultFont = available.find(f => currentFont.toLowerCase().includes(f.toLowerCase())) || available[0];
+  select.value = defaultFont;
+})();
+
+document.getElementById('fontFamily').addEventListener('change', e => {
+  const font = e.target.value;
+  const vp = document.getElementById('logViewport');
+  vp.style.fontFamily = `"${font}", monospace`;
+  if (filteredIndices.length > 0) {
+    measureLineHeight();
+    poolSize = 0;
+    createPool();
+    renderedRange = { start: -1, end: -1 };
+    renderVisibleLines();
+  }
+});
+
+function changeFontSize(delta) {
+  fontSize = Math.max(6, Math.min(72, fontSize + delta));
+  document.getElementById('logViewport').style.fontSize = fontSize + 'px';
+  document.getElementById('fontSizeLabel').textContent = fontSize;
+  if (filteredIndices.length > 0) {
+    measureLineHeight();
+    poolSize = 0;
+    createPool();
+    renderedRange = { start: -1, end: -1 };
+    renderVisibleLines();
+  }
+}
+
+// Ctrl+Wheel for font size
+document.getElementById('logViewport').addEventListener('wheel', e => {
+  if (e.ctrlKey) { e.preventDefault(); changeFontSize(e.deltaY < 0 ? 1 : -1); }
+}, {passive:false});
+
+// ============================================================
+// KEYBOARD SHORTCUTS
+// ============================================================
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'F3') { e.preventDefault(); document.getElementById('btnSearch').click(); }
+  if (e.key === 'F4') { e.preventDefault(); searchNextMatch(); }
+  if (e.key === 'Home') { e.preventDefault(); document.getElementById('logViewport').scrollTop = 0; }
+  if (e.key === 'End') { e.preventDefault(); const vp = document.getElementById('logViewport'); vp.scrollTop = vp.scrollHeight; }
+  if (e.ctrlKey && e.key === 'a') {
+    e.preventDefault();
+    if (!selectMode) enterSelectMode(-1);
+    selectedIndices.clear();
+    for (const i of filteredIndices) selectedIndices.add(i);
+    updateSelection();
+    updateSelCount();
+  }
+  if (e.ctrlKey && e.key === 'c') { document.getElementById('selCopy').click(); }
+  if (e.ctrlKey && e.key === 't') { e.preventDefault(); document.getElementById('btnTime').click(); }
+  if (e.key === 'Escape') {
+    if (selectMode) { exitSelectMode(); }
+    closeSearch(); closeTimeJump(); closeDetail();
+    document.getElementById('manualModal').classList.remove('show');
+  }
+});
+
+// ============================================================
+// FILTER UI
+// ============================================================
+document.getElementById('applyFilterBtn').onclick = () => { applyFilters(); closePanel('filter'); };
+
+// Realtime filtering
+document.getElementById('realtimeFilter').addEventListener('change', e => {
+  if (e.target.checked) {
+    ['filterA','filterB','filterC','filterD'].forEach(id => {
+      document.getElementById(id).addEventListener('input', realtimeFilterHandler);
+    });
+  } else {
+    ['filterA','filterB','filterC','filterD'].forEach(id => {
+      document.getElementById(id).removeEventListener('input', realtimeFilterHandler);
+    });
+  }
+});
+
+function realtimeFilterHandler() {
+  clearTimeout(realtimeTimer);
+  realtimeTimer = setTimeout(applyFilters, 150);
+}
+
+// Initialize realtime filtering (default on)
+['filterA','filterB','filterC','filterD'].forEach(id => {
+  document.getElementById(id).addEventListener('input', realtimeFilterHandler);
+});
+
+// Enter key in filter inputs
+['filterA','filterB','filterC','filterD'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') { applyFilters(); closePanel('filter'); }
+  });
+});
+
+// ============================================================
+// PROGRESS
+// ============================================================
+function showProgress(text) {
+  document.getElementById('progressText').textContent = text;
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressOverlay').classList.add('show');
+}
+function updateProgress(pct, text) {
+  document.getElementById('progressFill').style.width = pct + '%';
+  if (text) document.getElementById('progressText').textContent = text;
+}
+function hideProgress() { document.getElementById('progressOverlay').classList.remove('show'); }
+document.getElementById('progressCancel').onclick = () => { loadCancelled = true; };
+
+// ============================================================
+// TOAST
+// ============================================================
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+</script>
+</body>
+</html>
