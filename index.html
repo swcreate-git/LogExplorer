@@ -128,6 +128,26 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
 }
 .log-viewport.dark-theme { background:#111; color:#ddd; }
 .log-viewport.light-theme { background:#fff; color:#222; }
+/* Custom scrollbar — always visible, touch-friendly */
+.log-viewport::-webkit-scrollbar { width:14px; height:14px; }
+.log-viewport::-webkit-scrollbar-track { background:rgba(128,128,128,0.1); }
+.log-viewport::-webkit-scrollbar-thumb {
+  background:rgba(128,128,128,0.4); border-radius:7px; border:3px solid transparent;
+  background-clip:padding-box; min-height:40px;
+}
+.log-viewport::-webkit-scrollbar-thumb:active { background:rgba(128,128,128,0.7); background-clip:padding-box; }
+/* Custom touch scrollbar track (for iOS) */
+.scroll-track {
+  position:absolute; right:0; top:0; bottom:0; width:20px; z-index:10;
+  display:none; touch-action:none;
+}
+.scroll-track.show { display:block; }
+.scroll-thumb {
+  position:absolute; right:2px; width:16px; min-height:30px;
+  background:rgba(128,128,128,0.5); border-radius:8px;
+  touch-action:none;
+}
+.scroll-thumb:active, .scroll-thumb.dragging { background:rgba(128,128,128,0.8); }
 .log-content-layer { user-select:none; -webkit-user-select:none; min-width:fit-content; }
 .log-line {
   padding:0 8px; white-space:pre; display:flex; cursor:pointer; min-width:100%;
@@ -289,7 +309,7 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
 <!-- TOP BAR -->
 <div class="topbar">
   <button class="icon-btn" id="btnKinds" title="Log Kinds">☰</button>
-  <span class="title">LogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260320.04</span></span>
+  <span class="title">LogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260320.05</span></span>
   <span class="file-name" id="fileName">No file loaded</span>
   <span class="count" id="logCount"></span>
   <button class="icon-btn" id="btnFilter" title="Filters">⚙</button>
@@ -317,8 +337,13 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
       <button id="selCopy">Copy</button>
       <button id="selClose">✕</button>
     </div>
-    <div class="log-viewport dark-theme" id="logViewport">
-      <div class="log-content-layer" id="logContentLayer"></div>
+    <div style="position:relative;flex:1;overflow:hidden;display:flex">
+      <div class="log-viewport dark-theme" id="logViewport">
+        <div class="log-content-layer" id="logContentLayer"></div>
+      </div>
+      <div class="scroll-track" id="scrollTrack">
+        <div class="scroll-thumb" id="scrollThumb"></div>
+      </div>
     </div>
   </div>
 
@@ -1570,6 +1595,7 @@ function renderLogs() {
   const vp = document.getElementById('logViewport');
   vp.scrollTop = 0;
   renderVisibleLines();
+  if (window.updateScrollThumb) updateScrollThumb();
 }
 
 function getContentHTML(fi) {
@@ -1660,7 +1686,99 @@ function renderVisibleLines() {
   renderedRange = { start: actualStart, end: endFi };
 }
 
-document.getElementById('logViewport').addEventListener('scroll', renderVisibleLines, { passive: true });
+document.getElementById('logViewport').addEventListener('scroll', () => {
+  renderVisibleLines();
+  updateScrollThumb();
+}, { passive: true });
+
+// ============================================================
+// CUSTOM TOUCH SCROLLBAR (for iOS)
+// ============================================================
+{
+  const track = document.getElementById('scrollTrack');
+  const thumb = document.getElementById('scrollThumb');
+  const vp = document.getElementById('logViewport');
+  let thumbDragging = false;
+  let thumbStartY = 0;
+  let thumbStartScroll = 0;
+
+  function updateScrollThumb() {
+    if (!track.classList.contains('show')) return;
+    const vpH = vp.clientHeight;
+    const scrollH = vp.scrollHeight;
+    if (scrollH <= vpH) { thumb.style.display = 'none'; return; }
+    thumb.style.display = '';
+    const trackH = track.clientHeight;
+    const ratio = vpH / scrollH;
+    const thumbH = Math.max(30, trackH * ratio);
+    const scrollRatio = vp.scrollTop / (scrollH - vpH);
+    const thumbTop = scrollRatio * (trackH - thumbH);
+    thumb.style.height = thumbH + 'px';
+    thumb.style.top = thumbTop + 'px';
+  }
+
+  // Show custom scrollbar on touch devices
+  function detectTouch() {
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+      track.classList.add('show');
+      // Hide native scrollbar on touch devices
+      vp.style.overflow = 'auto';
+      updateScrollThumb();
+    }
+  }
+  detectTouch();
+
+  // Thumb drag
+  thumb.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    thumbDragging = true;
+    thumbStartY = e.clientY;
+    thumbStartScroll = vp.scrollTop;
+    thumb.classList.add('dragging');
+    thumb.setPointerCapture(e.pointerId);
+  });
+
+  thumb.addEventListener('pointermove', e => {
+    if (!thumbDragging) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const deltaY = e.clientY - thumbStartY;
+    const trackH = track.clientHeight;
+    const vpH = vp.clientHeight;
+    const scrollH = vp.scrollHeight;
+    const ratio = vpH / scrollH;
+    const thumbH = Math.max(30, trackH * ratio);
+    const scrollRange = scrollH - vpH;
+    const trackRange = trackH - thumbH;
+    if (trackRange > 0) {
+      vp.scrollTop = thumbStartScroll + (deltaY / trackRange) * scrollRange;
+    }
+  });
+
+  thumb.addEventListener('pointerup', e => {
+    thumbDragging = false;
+    thumb.classList.remove('dragging');
+    thumb.releasePointerCapture(e.pointerId);
+  });
+
+  // Tap on track = jump to position
+  track.addEventListener('pointerdown', e => {
+    if (e.target === thumb) return;
+    const rect = track.getBoundingClientRect();
+    const tapY = e.clientY - rect.top;
+    const trackH = track.clientHeight;
+    const scrollH = vp.scrollHeight;
+    const vpH = vp.clientHeight;
+    const ratio = tapY / trackH;
+    vp.scrollTop = ratio * (scrollH - vpH);
+  });
+
+  // Update on resize
+  window.addEventListener('resize', updateScrollThumb);
+  // Expose for renderLogs
+  window.updateScrollThumb = updateScrollThumb;
+}
 
 // ============================================================
 // DRAG SCROLL + INERTIA (matches C# LogDisplayControl)
