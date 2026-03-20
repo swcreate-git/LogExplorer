@@ -29,7 +29,7 @@
   --font-mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
-html, body { height:100%; overflow:hidden; font-family: var(--font-mono); background: var(--bg); color: var(--text); font-size:13px; touch-action:manipulation; }
+html, body { height:100%; overflow:hidden; font-family: var(--font-mono); background: var(--bg); color: var(--text); font-size:13px; touch-action:manipulation; -webkit-text-size-adjust:100%; text-size-adjust:100%; }
 
 /* --- TOP BAR --- */
 .topbar {
@@ -305,7 +305,7 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
       <span class="label">Tap to open or drop file</span>
     </div>
     <span class="supported">.log .hrlog .tlog .blog .zip</span>
-    <input type="file" id="fileInputLog" accept=".log,.hrlog,.tlog,.blog" style="display:none">
+    <input type="file" id="fileInputLog" accept=".log,.hrlog,.tlog,.blog,application/octet-stream" style="display:none">
     <input type="file" id="fileInputZip" accept=".zip,application/zip" style="display:none">
   </div>
 
