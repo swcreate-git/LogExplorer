@@ -309,7 +309,7 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
 <!-- TOP BAR -->
 <div class="topbar">
   <button class="icon-btn" id="btnKinds" title="Log Kinds">☰</button>
-  <span class="title">LogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260320.05</span></span>
+  <span class="title">LogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260320.06</span></span>
   <span class="file-name" id="fileName">No file loaded</span>
   <span class="count" id="logCount"></span>
   <button class="icon-btn" id="btnFilter" title="Filters">⚙</button>
@@ -800,55 +800,88 @@ function decodeCP949(bytes, start, len) {
 
 // --- TYPE1 DECODER: Binary with fixed header ---
 // Record: hour(1) + minute(1) + second(1) + millisecond(4) + logKind(1) + textLength(1) + text(N) + separator(1)
+// Validate Type1 record header at position i
+function isValidType1Header(bytes, i, totalLen) {
+  if (i + 9 > totalLen) return false;
+  const h = bytes[i], m = bytes[i+1], s = bytes[i+2];
+  if (h > 23 || m > 59 || s > 59) return false;
+  const textLen = bytes[i+8];
+  if (i + 9 + textLen > totalLen) return false;
+  return true;
+}
+
 async function decodeType1(bytes) {
   let i = 0;
   let count = 0;
+  let skipped = 0;
   const totalLen = bytes.length;
   while (i + 9 <= totalLen) {
     if (loadCancelled) return;
+    if (!isValidType1Header(bytes, i, totalLen)) {
+      // Resync: scan forward for next valid header
+      let resync = i + 1;
+      while (resync + 9 <= totalLen && !isValidType1Header(bytes, resync, totalLen)) resync++;
+      skipped += resync - i;
+      i = resync;
+      if (i + 9 > totalLen) break;
+      continue;
+    }
     const hour = bytes[i], min = bytes[i+1], sec = bytes[i+2];
-    // uint32 LE millisecond
     const ms = (bytes[i+3] | (bytes[i+4]<<8) | (bytes[i+5]<<16) | ((bytes[i+6]<<24)>>>0)) >>> 0;
     const kind = bytes[i+7];
     const textLen = bytes[i+8];
     i += 9;
-    if (i + textLen > totalLen) break;
     const content = decodeCP949(bytes, i, textLen);
     i += textLen;
-    // Skip separator byte (1 byte after text)
     if (i < totalLen) i++;
     const time = new Date(2000,0,1, hour, min, sec, ms % 1000);
     allLogs.push({time, kind, content, ms});
     if (++count % 5000 === 0) { updateProgress(i / totalLen * 100, `${count} items...`); await yieldThread(); }
   }
+  if (skipped > 0) console.warn(`Type1: skipped ${skipped} corrupted bytes`);
 }
 
 // --- TYPE2 DECODER: Extended binary ---
 // File header: 1 byte 'W' + 27 bytes skip = 28 bytes
 // Record: hour(1) + min(1) + sec(1) + skip(3) + ms(4) + skip(2) + kind(2) + textLen(1) + text(N) = 15 byte header
+function isValidType2Header(bytes, i, totalLen) {
+  if (i + 15 > totalLen) return false;
+  const h = bytes[i], m = bytes[i+1], s = bytes[i+2];
+  if (h > 23 || m > 59 || s > 59) return false;
+  const textLen = bytes[i+14];
+  if (i + 15 + textLen > totalLen) return false;
+  return true;
+}
+
 async function decodeType2(bytes) {
   const totalLen = bytes.length;
   if (totalLen < 28) return;
-  // Verify first byte is 'W' and skip 28-byte file header
   if (bytes[0] !== 0x57) return;
   let i = 28;
   let count = 0;
+  let skipped = 0;
   while (i + 15 <= totalLen) {
     if (loadCancelled) return;
+    if (!isValidType2Header(bytes, i, totalLen)) {
+      let resync = i + 1;
+      while (resync + 15 <= totalLen && !isValidType2Header(bytes, resync, totalLen)) resync++;
+      skipped += resync - i;
+      i = resync;
+      if (i + 15 > totalLen) break;
+      continue;
+    }
     const hour = bytes[i], min = bytes[i+1], sec = bytes[i+2];
-    // skip 3 bytes
     const ms = (bytes[i+6] | (bytes[i+7]<<8) | (bytes[i+8]<<16) | ((bytes[i+9]<<24)>>>0)) >>> 0;
-    // skip 2 bytes
     const kind = bytes[i+12] | (bytes[i+13]<<8);
     const textLen = bytes[i+14];
     i += 15;
-    if (i + textLen > totalLen) break;
     const content = decodeCP949(bytes, i, textLen);
     i += textLen;
     const time = new Date(2000,0,1, hour, min, sec, ms % 1000);
     allLogs.push({time, kind, content, ms});
     if (++count % 5000 === 0) { updateProgress(i / totalLen * 100, `${count} items...`); await yieldThread(); }
   }
+  if (skipped > 0) console.warn(`Type2: skipped ${skipped} corrupted bytes`);
 }
 
 // --- TYPE3 DECODER: UTF-16 LE text ---
@@ -951,6 +984,7 @@ async function decodeType5(bytes, logType, fileName) {
   const dict = new Map();
   let count = 0;
 
+  let skipped = 0;
   while (i < totalLen) {
     if (loadCancelled) return;
     const typeByte = bytes[i++];
@@ -961,8 +995,15 @@ async function decodeType5(bytes, logType, fileName) {
       dict.clear();
       continue;
     }
-    // Valid LogType 0-6
-    if (typeByte > 6) break;
+    // Resync on invalid type byte: scan forward for 0xFF (session marker)
+    if (typeByte > 6) {
+      let resync = i;
+      while (resync < totalLen && bytes[resync] !== 0xFF) resync++;
+      skipped += resync - (i - 1);
+      i = resync;
+      dict.clear();
+      continue;
+    }
     if (i + 6 > totalLen) break;
     const timeMs = (bytes[i]|(bytes[i+1]<<8)|(bytes[i+2]<<16)|((bytes[i+3]<<24)>>>0))>>>0;
     const msgLen = bytes[i+4]|(bytes[i+5]<<8);
@@ -975,6 +1016,7 @@ async function decodeType5(bytes, logType, fileName) {
     allLogs.push({time:logTime, kind:typeByte, content:message, ms:timeMs});
     if (++count % 5000 === 0) { updateProgress(i/totalLen*100, `${count} items...`); await yieldThread(); }
   }
+  if (skipped > 0) console.warn(`Type5: skipped ${skipped} corrupted bytes`);
 }
 
 function decompressType5(compressed, dict) {
