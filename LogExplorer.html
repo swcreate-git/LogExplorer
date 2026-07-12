@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>LogExplorer</title>
+<title>HRLogExplorer</title>
 <!-- PWA: standalone fullscreen on iOS home screen -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="LogExplorer">
+<meta name="apple-mobile-web-app-title" content="HRLogExplorer">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a1a2e">
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231a1a2e'/><text x='50' y='62' text-anchor='middle' font-size='40' fill='%23e94560'>L</text><text x='50' y='85' text-anchor='middle' font-size='16' fill='%23eee'>Explorer</text></svg>">
-<link rel="manifest" href="data:application/json,{%22name%22:%22LogExplorer%22,%22short_name%22:%22LogExp%22,%22display%22:%22standalone%22,%22background_color%22:%22%231a1a2e%22,%22theme_color%22:%22%231a1a2e%22,%22start_url%22:%22.%22}">
+<link rel="manifest" href="data:application/json,{%22name%22:%22HRLogExplorer%22,%22short_name%22:%22LogExp%22,%22display%22:%22standalone%22,%22background_color%22:%22%231a1a2e%22,%22theme_color%22:%22%231a1a2e%22,%22start_url%22:%22.%22}">
 <style>
 :root {
   --bg: #1a1a2e;
@@ -311,7 +311,7 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
 <!-- TOP BAR -->
 <div class="topbar">
   <button class="icon-btn" id="btnKinds" title="Log Kinds">☰</button>
-  <span class="title">LogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260410.01</span></span>
+  <span class="title">HRLogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260410.01</span></span>
   <span class="file-name" id="fileName">No file loaded</span>
   <span class="count" id="logCount"></span>
   <button class="icon-btn" id="btnFilter" title="Filters">⚙</button>
@@ -503,8 +503,8 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
       <tr><td><code>LAST target BEFORE condition</code></td><td>Last match of target before condition is met</td></tr>
     </table>
 
-    <h3>Prefix Operators (Filter B/C/D)</h3>
-    <p>Filters B, C, D can start with <code>AND</code>, <code>OR</code>, or <code>NOT</code> to combine with previous filters.</p>
+    <h3>Combining Filters (A/B/C/D)</h3>
+    <p>Active filter slots are combined with <code>OR</code> — a line is shown if it matches any enabled filter. Use in-expression operators (<code>AND</code>, <code>OR</code>, <code>NOT</code>) inside a single box for boolean logic.</p>
     <p style="margin-top:6px;color:var(--text-dim)">Note: Whitespace is NOT a separator. <code>Mark Str</code> is a single token including the space.</p>
   </div>
 </div>
@@ -545,7 +545,6 @@ let searchPos = -1;
 let detailIndex = -1;       // index in filteredIndices
 let fontSize = 12;
 let loadCancelled = false;
-let filterPrefixes = { B: '', C: '', D: '' };
 let realtimeTimer = null;
 let currentLogType = 'Type1'; // track current log type for time format & delta calc
 
@@ -1418,6 +1417,17 @@ function parseExpression(tokens) {
   function parseAnd() {
     let left = parseUnary();
     while (pos < tokens.length && tokens[pos].type === TokenType.And) { pos++; const right = parseUnary(); left = {type:'and', left, right}; }
+    // Implicit AND: 연산자 없이 인접한 atom({...}, "...", NOT, FIRST/LAST 등)을 AND 로 결합 (C# ParseAnd 와 동일)
+    // 제외 토큰(Or/RBrace/And/After/Before) 외에는 parseUnary 가 항상 pos 를 전진시키므로 무한루프 없음
+    while (pos < tokens.length &&
+           tokens[pos].type !== TokenType.Or &&
+           tokens[pos].type !== TokenType.RBrace &&
+           tokens[pos].type !== TokenType.And &&
+           tokens[pos].type !== TokenType.After &&
+           tokens[pos].type !== TokenType.Before) {
+      const right = parseUnary();
+      left = {type:'and', left, right};
+    }
     return left;
   }
   function parseUnary() {
@@ -1428,16 +1438,16 @@ function parseExpression(tokens) {
   }
   function parseFirstAfter() {
     pos++; // skip FIRST
-    const target = parsePrimary();
+    const target = parseUnary();
     if (pos < tokens.length && tokens[pos].type === TokenType.After) { pos++; }
-    const condition = parsePrimary();
+    const condition = parseUnary();
     return {type:'firstAfter', target, condition};
   }
   function parseLastBefore() {
     pos++; // skip LAST
-    const target = parsePrimary();
+    const target = parseUnary();
     if (pos < tokens.length && tokens[pos].type === TokenType.Before) { pos++; }
-    const condition = parsePrimary();
+    const condition = parseUnary();
     return {type:'lastBefore', target, condition};
   }
   function parsePrimary() {
@@ -1451,11 +1461,18 @@ function parseExpression(tokens) {
       const t = tokens[pos]; pos++;
       return {type:'literal', val:t.val, quoted:!!t.quoted};
     }
-    // implicit: match everything
+    // 인식할 수 없는 토큰은 건너뛰어 무한 루프 방지 (C# ParseAtom fallback 과 동일)
+    if (pos < tokens.length) pos++;
     return {type:'literal', val:'', quoted:false};
   }
   if (tokens.length === 0) return null;
   const result = parseOr();
+  // 파싱 후 소비되지 않은 토큰이 남으면 잘못된 표현식 — 조용히 버리지 않고 무효 처리
+  // (예: 짝 없는 '}', FIRST 없는 AFTER 등). null → 해당 슬롯은 결합에서 제외 (C# IsValid=false 와 동일).
+  if (pos < tokens.length) {
+    console.warn("Filter parse error: unexpected token '" + tokens[pos].val + "'");
+    return null;
+  }
   return result;
 }
 
@@ -1554,10 +1571,10 @@ function matchesSingle(node, item) {
 // ============================================================
 function applyFilters() {
   const filters = [
-    { id:'A', enabled: document.getElementById('filterACheck').checked, expr: document.getElementById('filterA').value, prefix:'' },
-    { id:'B', enabled: document.getElementById('filterBCheck').checked, expr: document.getElementById('filterB').value, prefix: filterPrefixes.B },
-    { id:'C', enabled: document.getElementById('filterCCheck').checked, expr: document.getElementById('filterC').value, prefix: filterPrefixes.C },
-    { id:'D', enabled: document.getElementById('filterDCheck').checked, expr: document.getElementById('filterD').value, prefix: filterPrefixes.D },
+    { id:'A', enabled: document.getElementById('filterACheck').checked, expr: document.getElementById('filterA').value },
+    { id:'B', enabled: document.getElementById('filterBCheck').checked, expr: document.getElementById('filterB').value },
+    { id:'C', enabled: document.getElementById('filterCCheck').checked, expr: document.getElementById('filterC').value },
+    { id:'D', enabled: document.getElementById('filterDCheck').checked, expr: document.getElementById('filterD').value },
   ];
 
   // Parse each filter
@@ -1572,7 +1589,7 @@ function applyFilters() {
   // Evaluate on all logs
   const matchSets = parsedFilters.map(ast => ast ? evaluateNode(ast, allLogs) : null);
 
-  // Combine filters with prefix operators
+  // Combine filters (활성 슬롯을 OR 로 결합)
   let combined = null;
   const filterBits = [1, 2, 4, 8]; // A=1, B=2, C=4, D=8
 
@@ -1588,28 +1605,11 @@ function applyFilters() {
     }
   }
 
-  // Combine with prefix logic
-  const prefixes = ['', filterPrefixes.B, filterPrefixes.C, filterPrefixes.D];
+  // Combine with OR (활성 슬롯 결합)
   for (let f=0; f<4; f++) {
     if (!matchSets[f]) continue;
-    if (combined === null) { combined = matchSets[f]; continue; }
-    const prefix = prefixes[f];
-    if (prefix === 'AND') {
-      const s = new Set();
-      for (const i of combined) if (matchSets[f].has(i)) s.add(i);
-      combined = s;
-    } else if (prefix === 'OR') {
-      for (const i of matchSets[f]) combined.add(i);
-    } else if (prefix === 'NOT') {
-      const s = new Set();
-      for (const i of combined) if (!matchSets[f].has(i)) s.add(i);
-      combined = s;
-    } else {
-      // Default AND for no prefix
-      const s = new Set();
-      for (const i of combined) if (matchSets[f].has(i)) s.add(i);
-      combined = s;
-    }
+    if (combined === null) { combined = new Set(matchSets[f]); continue; }
+    for (const i of matchSets[f]) combined.add(i);
   }
 
   // Build filtered indices (respecting log kind visibility, corruption always visible)
