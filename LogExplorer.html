@@ -78,6 +78,7 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
   background:var(--bg); color:var(--text); font-family:var(--font-mono); font-size:13px;
 }
 .filter-row input[type=text]:focus { outline:none; border-color:var(--accent); }
+.filter-row input[type=text].invalid { border-color:#f44; box-shadow:0 0 0 1px #f44; }
 .filter-check { width:18px; height:18px; accent-color:var(--accent); }
 .filter-apply-btn {
   width:100%; padding:10px; border:none; border-radius:8px; background:var(--accent); color:#fff;
@@ -264,6 +265,13 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
 .manual-content table { width:100%; border-collapse:collapse; margin:8px 0; }
 .manual-content th, .manual-content td { padding:4px 8px; border:1px solid var(--border); text-align:left; font-size:11px; }
 
+/* --- ZIP PICKER (reuses the manual modal look) --- */
+.zip-entry {
+  text-align:left; padding:8px 10px; border:1px solid var(--border); border-radius:6px;
+  background:var(--bg); color:var(--text); cursor:pointer; font-size:12px; font-family:var(--font-mono);
+}
+.zip-entry .zip-size { color:var(--text-dim); font-size:10px; }
+
 /* --- FONT SIZE CONTROL --- */
 .font-size-ctrl {
   display:none; align-items:center; gap:4px; padding:4px 8px;
@@ -311,7 +319,7 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
 <!-- TOP BAR -->
 <div class="topbar">
   <button class="icon-btn" id="btnKinds" title="Log Kinds">☰</button>
-  <span class="title">HRLogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20260410.01</span></span>
+  <span class="title">HRLogExplorer<span style="font-size:10px;font-weight:400;color:var(--text-dim);margin-left:4px">v20261003.02</span></span>
   <span class="file-name" id="fileName">No file loaded</span>
   <span class="count" id="logCount"></span>
   <button class="icon-btn" id="btnFilter" title="Filters">⚙</button>
@@ -447,9 +455,9 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
   </div>
   <div class="panel-body save-panel">
     <div class="save-mode">
-      <label><input type="radio" name="saveMode" value="all" checked> All visible logs</label>
-      <label><input type="radio" name="saveMode" value="filter"> Filtered logs only</label>
-      <label><input type="radio" name="saveMode" value="highlight"> Highlighted excerpts</label>
+      <label><input type="radio" name="saveMode" value="all"> All logs (log kind checks only)</label>
+      <label><input type="radio" name="saveMode" value="filter" checked> Filtered logs (as shown)</label>
+      <label><input type="radio" name="saveMode" value="highlight"> Highlighted excerpts (matched lines)</label>
     </div>
     <button class="export-btn" id="exportBtn">Export as .txt</button>
   </div>
@@ -506,6 +514,20 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
     <h3>Combining Filters (A/B/C/D)</h3>
     <p>Active filter slots are combined with <code>OR</code> — a line is shown if it matches any enabled filter. Use in-expression operators (<code>AND</code>, <code>OR</code>, <code>NOT</code>) inside a single box for boolean logic.</p>
     <p style="margin-top:6px;color:var(--text-dim)">Note: Whitespace is NOT a separator. <code>Mark Str</code> is a single token including the space.</p>
+    <p style="margin-top:6px;color:var(--text-dim)">Keywords (<code>AND OR NOT FIRST AFTER LAST BEFORE</code>) are operators only as standalone words — <code>error</code> and <code>CANNOT</code> are plain text.</p>
+    <p style="margin-top:6px;color:var(--text-dim)">An invalid expression (e.g. <code>foo OR</code>, <code>{a</code>) is ignored and its box turns red (the tooltip shows why). Highlights are shown for every valid filter; the checkbox only decides whether that filter takes part in showing/hiding lines.</p>
+  </div>
+</div>
+
+<!-- ZIP PICKER MODAL (separate from the manual so the manual is never overwritten) -->
+<div class="manual-modal" id="zipModal">
+  <div class="manual-content">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Select log file from ZIP</h3>
+      <button class="icon-btn" id="zipClose">✕</button>
+    </div>
+    <p id="zipInfo" style="margin:6px 0;color:var(--text-dim);font-size:11px"></p>
+    <div id="zipList" style="display:flex;flex-direction:column;gap:4px;margin-top:8px"></div>
   </div>
 </div>
 
@@ -526,10 +548,35 @@ html, body { height:100%; overflow:hidden; font-family: var(--font-mono); backgr
 <div class="toast" id="toast"></div>
 
 <script>
-// fflate - ZIP decompression library (MIT License)
-// https://github.com/101arrowz/fflate
+/*! fflate 0.8.2 - ZIP decompression library - https://github.com/101arrowz/fflate
+ * Inlined verbatim from https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js
+ * (sha256 c3b34f2e9f5e74d4d7d64e01cac7a0c01954c6c406414d42185c7b53d6875ddf) so that ZIP opening works offline
+ * and no third-party CDN script runs with access to log data.
+ *
+ * MIT License
+ *
+ * Copyright (c) 2023 Arjun Barrett
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+!function(f){typeof module!='undefined'&&typeof exports=='object'?module.exports=f():typeof define!='undefined'&&define.amd?define(f):(typeof self!='undefined'?self:this).fflate=f()}(function(){var _e={};"use strict";var t=(typeof module!='undefined'&&typeof exports=='object'?function(_f){"use strict";var e,t=";var __w=require('worker_threads');__w.parentPort.on('message',function(m){onmessage({data:m})}),postMessage=function(m,t){__w.parentPort.postMessage(m,t)},close=process.exit;self=global";try{e=require("worker_threads").Worker}catch(e){}exports.default=e?function(r,n,o,a,s){var u=!1,i=new e(r+t,{eval:!0}).on("error",(function(e){return s(e,null)})).on("message",(function(e){return s(null,e)})).on("exit",(function(e){e&&!u&&s(Error("exited with code "+e),null)}));return i.postMessage(o,a),i.terminate=function(){return u=!0,e.prototype.terminate.call(i)},i}:function(e,t,r,n,o){setImmediate((function(){return o(Error("async operations unsupported - update to Node 12+ (or Node 10-11 with the --experimental-worker CLI flag)"),null)}));var a=function(){};return{terminate:a,postMessage:a}};return _f}:function(_f){"use strict";var e={};_f.default=function(r,t,s,a,n){var o=new Worker(e[t]||(e[t]=URL.createObjectURL(new Blob([r+';addEventListener("error",function(e){e=e.error;postMessage({$e$:[e.message,e.code,e.stack]})})'],{type:"text/javascript"}))));return o.onmessage=function(e){var r=e.data,t=r.$e$;if(t){var s=Error(t[0]);s.code=t[1],s.stack=t[2],n(s,null)}else n(null,r)},o.postMessage(s,a),o};return _f})({}),n=Uint8Array,r=Uint16Array,e=Int32Array,i=new n([0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0,0,0,0]),o=new n([0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13,0,0]),s=new n([16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15]),a=function(t,n){for(var i=new r(31),o=0;o<31;++o)i[o]=n+=1<<t[o-1];var s=new e(i[30]);for(o=1;o<30;++o)for(var a=i[o];a<i[o+1];++a)s[a]=a-i[o]<<5|o;return{b:i,r:s}},u=a(i,2),h=u.b,f=u.r;h[28]=258,f[258]=28;for(var l=a(o,0),c=l.b,p=l.r,v=new r(32768),d=0;d<32768;++d){var g=(43690&d)>>1|(21845&d)<<1;v[d]=((65280&(g=(61680&(g=(52428&g)>>2|(13107&g)<<2))>>4|(3855&g)<<4))>>8|(255&g)<<8)>>1}var y=function(t,n,e){for(var i=t.length,o=0,s=new r(n);o<i;++o)t[o]&&++s[t[o]-1];var a,u=new r(n);for(o=1;o<n;++o)u[o]=u[o-1]+s[o-1]<<1;if(e){a=new r(1<<n);var h=15-n;for(o=0;o<i;++o)if(t[o])for(var f=o<<4|t[o],l=n-t[o],c=u[t[o]-1]++<<l,p=c|(1<<l)-1;c<=p;++c)a[v[c]>>h]=f}else for(a=new r(i),o=0;o<i;++o)t[o]&&(a[o]=v[u[t[o]-1]++]>>15-t[o]);return a},m=new n(288);for(d=0;d<144;++d)m[d]=8;for(d=144;d<256;++d)m[d]=9;for(d=256;d<280;++d)m[d]=7;for(d=280;d<288;++d)m[d]=8;var b=new n(32);for(d=0;d<32;++d)b[d]=5;var w=y(m,9,0),x=y(m,9,1),z=y(b,5,0),k=y(b,5,1),M=function(t){for(var n=t[0],r=1;r<t.length;++r)t[r]>n&&(n=t[r]);return n},S=function(t,n,r){var e=n/8|0;return(t[e]|t[e+1]<<8)>>(7&n)&r},A=function(t,n){var r=n/8|0;return(t[r]|t[r+1]<<8|t[r+2]<<16)>>(7&n)},T=function(t){return(t+7)/8|0},D=function(t,r,e){return(null==r||r<0)&&(r=0),(null==e||e>t.length)&&(e=t.length),new n(t.subarray(r,e))};_e.FlateErrorCode={UnexpectedEOF:0,InvalidBlockType:1,InvalidLengthLiteral:2,InvalidDistance:3,StreamFinished:4,NoStreamHandler:5,InvalidHeader:6,NoCallback:7,InvalidUTF8:8,ExtraFieldTooLong:9,InvalidDate:10,FilenameTooLong:11,StreamFinishing:12,InvalidZipData:13,UnknownCompressionMethod:14};var C=["unexpected EOF","invalid block type","invalid length/literal","invalid distance","stream finished","no stream handler",,"no callback","invalid UTF-8 data","extra field too long","date not in range 1980-2099","filename too long","stream finishing","invalid zip data"],I=function(t,n,r){var e=Error(n||C[t]);if(e.code=t,Error.captureStackTrace&&Error.captureStackTrace(e,I),!r)throw e;return e},U=function(t,r,e,a){var u=t.length,f=a?a.length:0;if(!u||r.f&&!r.l)return e||new n(0);var l=!e,p=l||2!=r.i,v=r.i;l&&(e=new n(3*u));var d=function(t){var r=e.length;if(t>r){var i=new n(Math.max(2*r,t));i.set(e),e=i}},g=r.f||0,m=r.p||0,b=r.b||0,w=r.l,z=r.d,C=r.m,U=r.n,F=8*u;do{if(!w){g=S(t,m,1);var E=S(t,m+1,3);if(m+=3,!E){var Z=t[(J=T(m)+4)-4]|t[J-3]<<8,q=J+Z;if(q>u){v&&I(0);break}p&&d(b+Z),e.set(t.subarray(J,q),b),r.b=b+=Z,r.p=m=8*q,r.f=g;continue}if(1==E)w=x,z=k,C=9,U=5;else if(2==E){var O=S(t,m,31)+257,G=S(t,m+10,15)+4,L=O+S(t,m+5,31)+1;m+=14;for(var H=new n(L),j=new n(19),N=0;N<G;++N)j[s[N]]=S(t,m+3*N,7);m+=3*G;var P=M(j),B=(1<<P)-1,Y=y(j,P,1);for(N=0;N<L;){var J,K=Y[S(t,m,B)];if(m+=15&K,(J=K>>4)<16)H[N++]=J;else{var Q=0,R=0;for(16==J?(R=3+S(t,m,3),m+=2,Q=H[N-1]):17==J?(R=3+S(t,m,7),m+=3):18==J&&(R=11+S(t,m,127),m+=7);R--;)H[N++]=Q}}var V=H.subarray(0,O),W=H.subarray(O);C=M(V),U=M(W),w=y(V,C,1),z=y(W,U,1)}else I(1);if(m>F){v&&I(0);break}}p&&d(b+131072);for(var X=(1<<C)-1,$=(1<<U)-1,_=m;;_=m){var tt=(Q=w[A(t,m)&X])>>4;if((m+=15&Q)>F){v&&I(0);break}if(Q||I(2),tt<256)e[b++]=tt;else{if(256==tt){_=m,w=null;break}var nt=tt-254;tt>264&&(nt=S(t,m,(1<<(it=i[N=tt-257]))-1)+h[N],m+=it);var rt=z[A(t,m)&$],et=rt>>4;if(rt||I(3),m+=15&rt,W=c[et],et>3){var it=o[et];W+=A(t,m)&(1<<it)-1,m+=it}if(m>F){v&&I(0);break}p&&d(b+131072);var ot=b+nt;if(b<W){var st=f-W,at=Math.min(W,ot);for(st+b<0&&I(3);b<at;++b)e[b]=a[st+b]}for(;b<ot;++b)e[b]=e[b-W]}}r.l=w,r.p=_,r.b=b,r.f=g,w&&(g=1,r.m=C,r.d=z,r.n=U)}while(!g);return b!=e.length&&l?D(e,0,b):e.subarray(0,b)},F=function(t,n,r){var e=n/8|0;t[e]|=r<<=7&n,t[e+1]|=r>>8},E=function(t,n,r){var e=n/8|0;t[e]|=r<<=7&n,t[e+1]|=r>>8,t[e+2]|=r>>16},Z=function(t,e){for(var i=[],o=0;o<t.length;++o)t[o]&&i.push({s:o,f:t[o]});var s=i.length,a=i.slice();if(!s)return{t:N,l:0};if(1==s){var u=new n(i[0].s+1);return u[i[0].s]=1,{t:u,l:1}}i.sort((function(t,n){return t.f-n.f})),i.push({s:-1,f:25001});var h=i[0],f=i[1],l=0,c=1,p=2;for(i[0]={s:-1,f:h.f+f.f,l:h,r:f};c!=s-1;)h=i[i[l].f<i[p].f?l++:p++],f=i[l!=c&&i[l].f<i[p].f?l++:p++],i[c++]={s:-1,f:h.f+f.f,l:h,r:f};var v=a[0].s;for(o=1;o<s;++o)a[o].s>v&&(v=a[o].s);var d=new r(v+1),g=q(i[c-1],d,0);if(g>e){o=0;var y=0,m=g-e,b=1<<m;for(a.sort((function(t,n){return d[n.s]-d[t.s]||t.f-n.f}));o<s;++o){var w=a[o].s;if(!(d[w]>e))break;y+=b-(1<<g-d[w]),d[w]=e}for(y>>=m;y>0;){var x=a[o].s;d[x]<e?y-=1<<e-d[x]++-1:++o}for(;o>=0&&y;--o){var z=a[o].s;d[z]==e&&(--d[z],++y)}g=e}return{t:new n(d),l:g}},q=function(t,n,r){return-1==t.s?Math.max(q(t.l,n,r+1),q(t.r,n,r+1)):n[t.s]=r},O=function(t){for(var n=t.length;n&&!t[--n];);for(var e=new r(++n),i=0,o=t[0],s=1,a=function(t){e[i++]=t},u=1;u<=n;++u)if(t[u]==o&&u!=n)++s;else{if(!o&&s>2){for(;s>138;s-=138)a(32754);s>2&&(a(s>10?s-11<<5|28690:s-3<<5|12305),s=0)}else if(s>3){for(a(o),--s;s>6;s-=6)a(8304);s>2&&(a(s-3<<5|8208),s=0)}for(;s--;)a(o);s=1,o=t[u]}return{c:e.subarray(0,i),n:n}},G=function(t,n){for(var r=0,e=0;e<n.length;++e)r+=t[e]*n[e];return r},L=function(t,n,r){var e=r.length,i=T(n+2);t[i]=255&e,t[i+1]=e>>8,t[i+2]=255^t[i],t[i+3]=255^t[i+1];for(var o=0;o<e;++o)t[i+o+4]=r[o];return 8*(i+4+e)},H=function(t,n,e,a,u,h,f,l,c,p,v){F(n,v++,e),++u[256];for(var d=Z(u,15),g=d.t,x=d.l,k=Z(h,15),M=k.t,S=k.l,A=O(g),T=A.c,D=A.n,C=O(M),I=C.c,U=C.n,q=new r(19),H=0;H<T.length;++H)++q[31&T[H]];for(H=0;H<I.length;++H)++q[31&I[H]];for(var j=Z(q,7),N=j.t,P=j.l,B=19;B>4&&!N[s[B-1]];--B);var Y,J,K,Q,R=p+5<<3,V=G(u,m)+G(h,b)+f,W=G(u,g)+G(h,M)+f+14+3*B+G(q,N)+2*q[16]+3*q[17]+7*q[18];if(c>=0&&R<=V&&R<=W)return L(n,v,t.subarray(c,c+p));if(F(n,v,1+(W<V)),v+=2,W<V){Y=y(g,x,0),J=g,K=y(M,S,0),Q=M;var X=y(N,P,0);for(F(n,v,D-257),F(n,v+5,U-1),F(n,v+10,B-4),v+=14,H=0;H<B;++H)F(n,v+3*H,N[s[H]]);v+=3*B;for(var $=[T,I],_=0;_<2;++_){var tt=$[_];for(H=0;H<tt.length;++H)F(n,v,X[rt=31&tt[H]]),v+=N[rt],rt>15&&(F(n,v,tt[H]>>5&127),v+=tt[H]>>12)}}else Y=w,J=m,K=z,Q=b;for(H=0;H<l;++H){var nt=a[H];if(nt>255){var rt;E(n,v,Y[257+(rt=nt>>18&31)]),v+=J[rt+257],rt>7&&(F(n,v,nt>>23&31),v+=i[rt]);var et=31&nt;E(n,v,K[et]),v+=Q[et],et>3&&(E(n,v,nt>>5&8191),v+=o[et])}else E(n,v,Y[nt]),v+=J[nt]}return E(n,v,Y[256]),v+J[256]},j=new e([65540,131080,131088,131104,262176,1048704,1048832,2114560,2117632]),N=new n(0),P=function(t,s,a,u,h,l){var c=l.z||t.length,v=new n(u+c+5*(1+Math.ceil(c/7e3))+h),d=v.subarray(u,v.length-h),g=l.l,y=7&(l.r||0);if(s){y&&(d[0]=l.r>>3);for(var m=j[s-1],b=m>>13,w=8191&m,x=(1<<a)-1,z=l.p||new r(32768),k=l.h||new r(x+1),M=Math.ceil(a/3),S=2*M,A=function(n){return(t[n]^t[n+1]<<M^t[n+2]<<S)&x},C=new e(25e3),I=new r(288),U=new r(32),F=0,E=0,Z=l.i||0,q=0,O=l.w||0,G=0;Z+2<c;++Z){var N=A(Z),P=32767&Z,B=k[N];if(z[P]=B,k[N]=P,O<=Z){var Y=c-Z;if((F>7e3||q>24576)&&(Y>423||!g)){y=H(t,d,0,C,I,U,E,q,G,Z-G,y),q=F=E=0,G=Z;for(var J=0;J<286;++J)I[J]=0;for(J=0;J<30;++J)U[J]=0}var K=2,Q=0,R=w,V=P-B&32767;if(Y>2&&N==A(Z-V))for(var W=Math.min(b,Y)-1,X=Math.min(32767,Z),$=Math.min(258,Y);V<=X&&--R&&P!=B;){if(t[Z+K]==t[Z+K-V]){for(var _=0;_<$&&t[Z+_]==t[Z+_-V];++_);if(_>K){if(K=_,Q=V,_>W)break;var tt=Math.min(V,_-2),nt=0;for(J=0;J<tt;++J){var rt=Z-V+J&32767,et=rt-z[rt]&32767;et>nt&&(nt=et,B=rt)}}}V+=(P=B)-(B=z[P])&32767}if(Q){C[q++]=268435456|f[K]<<18|p[Q];var it=31&f[K],ot=31&p[Q];E+=i[it]+o[ot],++I[257+it],++U[ot],O=Z+K,++F}else C[q++]=t[Z],++I[t[Z]]}}for(Z=Math.max(Z,O);Z<c;++Z)C[q++]=t[Z],++I[t[Z]];y=H(t,d,g,C,I,U,E,q,G,Z-G,y),g||(l.r=7&y|d[y/8|0]<<3,y-=7,l.h=k,l.p=z,l.i=Z,l.w=O)}else{for(Z=l.w||0;Z<c+g;Z+=65535){var st=Z+65535;st>=c&&(d[y/8|0]=g,st=c),y=L(d,y+1,t.subarray(Z,st))}l.i=c}return D(v,0,u+T(y)+h)},B=function(){for(var t=new Int32Array(256),n=0;n<256;++n){for(var r=n,e=9;--e;)r=(1&r&&-306674912)^r>>>1;t[n]=r}return t}(),Y=function(){var t=-1;return{p:function(n){for(var r=t,e=0;e<n.length;++e)r=B[255&r^n[e]]^r>>>8;t=r},d:function(){return~t}}},J=function(){var t=1,n=0;return{p:function(r){for(var e=t,i=n,o=0|r.length,s=0;s!=o;){for(var a=Math.min(s+2655,o);s<a;++s)i+=e+=r[s];e=(65535&e)+15*(e>>16),i=(65535&i)+15*(i>>16)}t=e,n=i},d:function(){return(255&(t%=65521))<<24|(65280&t)<<8|(255&(n%=65521))<<8|n>>8}}},K=function(t,r,e,i,o){if(!o&&(o={l:1},r.dictionary)){var s=r.dictionary.subarray(-32768),a=new n(s.length+t.length);a.set(s),a.set(t,s.length),t=a,o.w=s.length}return P(t,null==r.level?6:r.level,null==r.mem?o.l?Math.ceil(1.5*Math.max(8,Math.min(13,Math.log(t.length)))):20:12+r.mem,e,i,o)},Q=function(t,n){var r={};for(var e in t)r[e]=t[e];for(var e in n)r[e]=n[e];return r},R=function(t,n,r){for(var e=t(),i=""+t,o=i.slice(i.indexOf("[")+1,i.lastIndexOf("]")).replace(/\s+/g,"").split(","),s=0;s<e.length;++s){var a=e[s],u=o[s];if("function"==typeof a){n+=";"+u+"=";var h=""+a;if(a.prototype)if(-1!=h.indexOf("[native code]")){var f=h.indexOf(" ",8)+1;n+=h.slice(f,h.indexOf("(",f))}else for(var l in n+=h,a.prototype)n+=";"+u+".prototype."+l+"="+a.prototype[l];else n+=h}else r[u]=a}return n},V=[],W=function(t){var n=[];for(var r in t)t[r].buffer&&n.push((t[r]=new t[r].constructor(t[r])).buffer);return n},X=function(n,r,e,i){if(!V[e]){for(var o="",s={},a=n.length-1,u=0;u<a;++u)o=R(n[u],o,s);V[e]={c:R(n[a],o,s),e:s}}var h=Q({},V[e].e);return(0,t.default)(V[e].c+";onmessage=function(e){for(var k in e.data)self[k]=e.data[k];onmessage="+r+"}",e,h,W(h),i)},$=function(){return[n,r,e,i,o,s,h,c,x,k,v,C,y,M,S,A,T,D,I,U,Tt,it,ot]},_=function(){return[n,r,e,i,o,s,f,p,w,m,z,b,v,j,N,y,F,E,Z,q,O,G,L,H,T,D,P,K,kt,it]},tt=function(){return[pt,gt,ct,Y,B]},nt=function(){return[vt,dt]},rt=function(){return[yt,ct,J]},et=function(){return[mt]},it=function(t){return postMessage(t,[t.buffer])},ot=function(t){return t&&{out:t.size&&new n(t.size),dictionary:t.dictionary}},st=function(t,n,r,e,i,o){var s=X(r,e,i,(function(t,n){s.terminate(),o(t,n)}));return s.postMessage([t,n],n.consume?[t.buffer]:[]),function(){s.terminate()}},at=function(t){return t.ondata=function(t,n){return postMessage([t,n],[t.buffer])},function(n){n.data.length?(t.push(n.data[0],n.data[1]),postMessage([n.data[0].length])):t.flush()}},ut=function(t,n,r,e,i,o,s){var a,u=X(t,e,i,(function(t,r){t?(u.terminate(),n.ondata.call(n,t)):Array.isArray(r)?1==r.length?(n.queuedSize-=r[0],n.ondrain&&n.ondrain(r[0])):(r[1]&&u.terminate(),n.ondata.call(n,t,r[0],r[1])):s(r)}));u.postMessage(r),n.queuedSize=0,n.push=function(t,r){n.ondata||I(5),a&&n.ondata(I(4,0,1),null,!!r),n.queuedSize+=t.length,u.postMessage([t,a=r],[t.buffer])},n.terminate=function(){u.terminate()},o&&(n.flush=function(){u.postMessage([])})},ht=function(t,n){return t[n]|t[n+1]<<8},ft=function(t,n){return(t[n]|t[n+1]<<8|t[n+2]<<16|t[n+3]<<24)>>>0},lt=function(t,n){return ft(t,n)+4294967296*ft(t,n+4)},ct=function(t,n,r){for(;r;++n)t[n]=r,r>>>=8},pt=function(t,n){var r=n.filename;if(t[0]=31,t[1]=139,t[2]=8,t[8]=n.level<2?4:9==n.level?2:0,t[9]=3,0!=n.mtime&&ct(t,4,Math.floor(new Date(n.mtime||Date.now())/1e3)),r){t[3]=8;for(var e=0;e<=r.length;++e)t[e+10]=r.charCodeAt(e)}},vt=function(t){31==t[0]&&139==t[1]&&8==t[2]||I(6,"invalid gzip data");var n=t[3],r=10;4&n&&(r+=2+(t[10]|t[11]<<8));for(var e=(n>>3&1)+(n>>4&1);e>0;e-=!t[r++]);return r+(2&n)},dt=function(t){var n=t.length;return(t[n-4]|t[n-3]<<8|t[n-2]<<16|t[n-1]<<24)>>>0},gt=function(t){return 10+(t.filename?t.filename.length+1:0)},yt=function(t,n){var r=n.level,e=0==r?0:r<6?1:9==r?3:2;if(t[0]=120,t[1]=e<<6|(n.dictionary&&32),t[1]|=31-(t[0]<<8|t[1])%31,n.dictionary){var i=J();i.p(n.dictionary),ct(t,2,i.d())}},mt=function(t,n){return(8!=(15&t[0])||t[0]>>4>7||(t[0]<<8|t[1])%31)&&I(6,"invalid zlib data"),(t[1]>>5&1)==+!n&&I(6,"invalid zlib data: "+(32&t[1]?"need":"unexpected")+" dictionary"),2+(t[1]>>3&4)};function bt(t,n){return"function"==typeof t&&(n=t,t={}),this.ondata=n,t}var wt=function(){function t(t,r){if("function"==typeof t&&(r=t,t={}),this.ondata=r,this.o=t||{},this.s={l:0,i:32768,w:32768,z:32768},this.b=new n(98304),this.o.dictionary){var e=this.o.dictionary.subarray(-32768);this.b.set(e,32768-e.length),this.s.i=32768-e.length}}return t.prototype.p=function(t,n){this.ondata(K(t,this.o,0,0,this.s),n)},t.prototype.push=function(t,r){this.ondata||I(5),this.s.l&&I(4);var e=t.length+this.s.z;if(e>this.b.length){if(e>2*this.b.length-32768){var i=new n(-32768&e);i.set(this.b.subarray(0,this.s.z)),this.b=i}var o=this.b.length-this.s.z;this.b.set(t.subarray(0,o),this.s.z),this.s.z=this.b.length,this.p(this.b,!1),this.b.set(this.b.subarray(-32768)),this.b.set(t.subarray(o),32768),this.s.z=t.length-o+32768,this.s.i=32766,this.s.w=32768}else this.b.set(t,this.s.z),this.s.z+=t.length;this.s.l=1&r,(this.s.z>this.s.w+8191||r)&&(this.p(this.b,r||!1),this.s.w=this.s.i,this.s.i-=2)},t.prototype.flush=function(){this.ondata||I(5),this.s.l&&I(4),this.p(this.b,!1),this.s.w=this.s.i,this.s.i-=2},t}();_e.Deflate=wt;var xt=function(){return function(t,n){ut([_,function(){return[at,wt]}],this,bt.call(this,t,n),(function(t){var n=new wt(t.data);onmessage=at(n)}),6,1)}}();function zt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[_],(function(t){return it(kt(t.data[0],t.data[1]))}),0,r)}function kt(t,n){return K(t,n||{},0,0)}_e.AsyncDeflate=xt,_e.deflate=zt,_e.deflateSync=kt;var Mt=function(){function t(t,r){"function"==typeof t&&(r=t,t={}),this.ondata=r;var e=t&&t.dictionary&&t.dictionary.subarray(-32768);this.s={i:0,b:e?e.length:0},this.o=new n(32768),this.p=new n(0),e&&this.o.set(e)}return t.prototype.e=function(t){if(this.ondata||I(5),this.d&&I(4),this.p.length){if(t.length){var r=new n(this.p.length+t.length);r.set(this.p),r.set(t,this.p.length),this.p=r}}else this.p=t},t.prototype.c=function(t){this.s.i=+(this.d=t||!1);var n=this.s.b,r=U(this.p,this.s,this.o);this.ondata(D(r,n,this.s.b),this.d),this.o=D(r,this.s.b-32768),this.s.b=this.o.length,this.p=D(this.p,this.s.p/8|0),this.s.p&=7},t.prototype.push=function(t,n){this.e(t),this.c(n)},t}();_e.Inflate=Mt;var St=function(){return function(t,n){ut([$,function(){return[at,Mt]}],this,bt.call(this,t,n),(function(t){var n=new Mt(t.data);onmessage=at(n)}),7,0)}}();function At(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[$],(function(t){return it(Tt(t.data[0],ot(t.data[1])))}),1,r)}function Tt(t,n){return U(t,{i:2},n&&n.out,n&&n.dictionary)}_e.AsyncInflate=St,_e.inflate=At,_e.inflateSync=Tt;var Dt=function(){function t(t,n){this.c=Y(),this.l=0,this.v=1,wt.call(this,t,n)}return t.prototype.push=function(t,n){this.c.p(t),this.l+=t.length,wt.prototype.push.call(this,t,n)},t.prototype.p=function(t,n){var r=K(t,this.o,this.v&&gt(this.o),n&&8,this.s);this.v&&(pt(r,this.o),this.v=0),n&&(ct(r,r.length-8,this.c.d()),ct(r,r.length-4,this.l)),this.ondata(r,n)},t.prototype.flush=function(){wt.prototype.flush.call(this)},t}();_e.Gzip=Dt,_e.Compress=Dt;var Ct=function(){return function(t,n){ut([_,tt,function(){return[at,wt,Dt]}],this,bt.call(this,t,n),(function(t){var n=new Dt(t.data);onmessage=at(n)}),8,1)}}();function It(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[_,tt,function(){return[Ut]}],(function(t){return it(Ut(t.data[0],t.data[1]))}),2,r)}function Ut(t,n){n||(n={});var r=Y(),e=t.length;r.p(t);var i=K(t,n,gt(n),8),o=i.length;return pt(i,n),ct(i,o-8,r.d()),ct(i,o-4,e),i}_e.AsyncGzip=Ct,_e.AsyncCompress=Ct,_e.gzip=It,_e.compress=It,_e.gzipSync=Ut,_e.compressSync=Ut;var Ft=function(){function t(t,n){this.v=1,this.r=0,Mt.call(this,t,n)}return t.prototype.push=function(t,r){if(Mt.prototype.e.call(this,t),this.r+=t.length,this.v){var e=this.p.subarray(this.v-1),i=e.length>3?vt(e):4;if(i>e.length){if(!r)return}else this.v>1&&this.onmember&&this.onmember(this.r-e.length);this.p=e.subarray(i),this.v=0}Mt.prototype.c.call(this,r),!this.s.f||this.s.l||r||(this.v=T(this.s.p)+9,this.s={i:0},this.o=new n(0),this.push(new n(0),r))},t}();_e.Gunzip=Ft;var Et=function(){return function(t,n){var r=this;ut([$,nt,function(){return[at,Mt,Ft]}],this,bt.call(this,t,n),(function(t){var n=new Ft(t.data);n.onmember=function(t){return postMessage(t)},onmessage=at(n)}),9,0,(function(t){return r.onmember&&r.onmember(t)}))}}();function Zt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[$,nt,function(){return[qt]}],(function(t){return it(qt(t.data[0],t.data[1]))}),3,r)}function qt(t,r){var e=vt(t);return e+8>t.length&&I(6,"invalid gzip data"),U(t.subarray(e,-8),{i:2},r&&r.out||new n(dt(t)),r&&r.dictionary)}_e.AsyncGunzip=Et,_e.gunzip=Zt,_e.gunzipSync=qt;var Ot=function(){function t(t,n){this.c=J(),this.v=1,wt.call(this,t,n)}return t.prototype.push=function(t,n){this.c.p(t),wt.prototype.push.call(this,t,n)},t.prototype.p=function(t,n){var r=K(t,this.o,this.v&&(this.o.dictionary?6:2),n&&4,this.s);this.v&&(yt(r,this.o),this.v=0),n&&ct(r,r.length-4,this.c.d()),this.ondata(r,n)},t.prototype.flush=function(){wt.prototype.flush.call(this)},t}();_e.Zlib=Ot;var Gt=function(){return function(t,n){ut([_,rt,function(){return[at,wt,Ot]}],this,bt.call(this,t,n),(function(t){var n=new Ot(t.data);onmessage=at(n)}),10,1)}}();function Lt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[_,rt,function(){return[Ht]}],(function(t){return it(Ht(t.data[0],t.data[1]))}),4,r)}function Ht(t,n){n||(n={});var r=J();r.p(t);var e=K(t,n,n.dictionary?6:2,4);return yt(e,n),ct(e,e.length-4,r.d()),e}_e.AsyncZlib=Gt,_e.zlib=Lt,_e.zlibSync=Ht;var jt=function(){function t(t,n){Mt.call(this,t,n),this.v=t&&t.dictionary?2:1}return t.prototype.push=function(t,n){if(Mt.prototype.e.call(this,t),this.v){if(this.p.length<6&&!n)return;this.p=this.p.subarray(mt(this.p,this.v-1)),this.v=0}n&&(this.p.length<4&&I(6,"invalid zlib data"),this.p=this.p.subarray(0,-4)),Mt.prototype.c.call(this,n)},t}();_e.Unzlib=jt;var Nt=function(){return function(t,n){ut([$,et,function(){return[at,Mt,jt]}],this,bt.call(this,t,n),(function(t){var n=new jt(t.data);onmessage=at(n)}),11,0)}}();function Pt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),st(t,n,[$,et,function(){return[Bt]}],(function(t){return it(Bt(t.data[0],ot(t.data[1])))}),5,r)}function Bt(t,n){return U(t.subarray(mt(t,n&&n.dictionary),-4),{i:2},n&&n.out,n&&n.dictionary)}_e.AsyncUnzlib=Nt,_e.unzlib=Pt,_e.unzlibSync=Bt;var Yt=function(){function t(t,n){this.o=bt.call(this,t,n)||{},this.G=Ft,this.I=Mt,this.Z=jt}return t.prototype.i=function(){var t=this;this.s.ondata=function(n,r){t.ondata(n,r)}},t.prototype.push=function(t,r){if(this.ondata||I(5),this.s)this.s.push(t,r);else{if(this.p&&this.p.length){var e=new n(this.p.length+t.length);e.set(this.p),e.set(t,this.p.length)}else this.p=t;this.p.length>2&&(this.s=31==this.p[0]&&139==this.p[1]&&8==this.p[2]?new this.G(this.o):8!=(15&this.p[0])||this.p[0]>>4>7||(this.p[0]<<8|this.p[1])%31?new this.I(this.o):new this.Z(this.o),this.i(),this.s.push(this.p,r),this.p=null)}},t}();_e.Decompress=Yt;var Jt=function(){function t(t,n){Yt.call(this,t,n),this.queuedSize=0,this.G=Et,this.I=St,this.Z=Nt}return t.prototype.i=function(){var t=this;this.s.ondata=function(n,r,e){t.ondata(n,r,e)},this.s.ondrain=function(n){t.queuedSize-=n,t.ondrain&&t.ondrain(n)}},t.prototype.push=function(t,n){this.queuedSize+=t.length,Yt.prototype.push.call(this,t,n)},t}();function Kt(t,n,r){return r||(r=n,n={}),"function"!=typeof r&&I(7),31==t[0]&&139==t[1]&&8==t[2]?Zt(t,n,r):8!=(15&t[0])||t[0]>>4>7||(t[0]<<8|t[1])%31?At(t,n,r):Pt(t,n,r)}function Qt(t,n){return 31==t[0]&&139==t[1]&&8==t[2]?qt(t,n):8!=(15&t[0])||t[0]>>4>7||(t[0]<<8|t[1])%31?Tt(t,n):Bt(t,n)}_e.AsyncDecompress=Jt,_e.decompress=Kt,_e.decompressSync=Qt;var Rt=function(t,r,e,i){for(var o in t){var s=t[o],a=r+o,u=i;Array.isArray(s)&&(u=Q(i,s[1]),s=s[0]),s instanceof n?e[a]=[s,u]:(e[a+="/"]=[new n(0),u],Rt(s,a,e,i))}},Vt="undefined"!=typeof TextEncoder&&new TextEncoder,Wt="undefined"!=typeof TextDecoder&&new TextDecoder,Xt=0;try{Wt.decode(N,{stream:!0}),Xt=1}catch(t){}var $t=function(t){for(var n="",r=0;;){var e=t[r++],i=(e>127)+(e>223)+(e>239);if(r+i>t.length)return{s:n,r:D(t,r-1)};i?3==i?(e=((15&e)<<18|(63&t[r++])<<12|(63&t[r++])<<6|63&t[r++])-65536,n+=String.fromCharCode(55296|e>>10,56320|1023&e)):n+=String.fromCharCode(1&i?(31&e)<<6|63&t[r++]:(15&e)<<12|(63&t[r++])<<6|63&t[r++]):n+=String.fromCharCode(e)}},_t=function(){function t(t){this.ondata=t,Xt?this.t=new TextDecoder:this.p=N}return t.prototype.push=function(t,r){if(this.ondata||I(5),r=!!r,this.t)return this.ondata(this.t.decode(t,{stream:!0}),r),void(r&&(this.t.decode().length&&I(8),this.t=null));this.p||I(4);var e=new n(this.p.length+t.length);e.set(this.p),e.set(t,this.p.length);var i=$t(e),o=i.s,s=i.r;r?(s.length&&I(8),this.p=null):this.p=s,this.ondata(o,r)},t}();_e.DecodeUTF8=_t;var tn=function(){function t(t){this.ondata=t}return t.prototype.push=function(t,n){this.ondata||I(5),this.d&&I(4),this.ondata(nn(t),this.d=n||!1)},t}();function nn(t,r){if(r){for(var e=new n(t.length),i=0;i<t.length;++i)e[i]=t.charCodeAt(i);return e}if(Vt)return Vt.encode(t);var o=t.length,s=new n(t.length+(t.length>>1)),a=0,u=function(t){s[a++]=t};for(i=0;i<o;++i){if(a+5>s.length){var h=new n(a+8+(o-i<<1));h.set(s),s=h}var f=t.charCodeAt(i);f<128||r?u(f):f<2048?(u(192|f>>6),u(128|63&f)):f>55295&&f<57344?(u(240|(f=65536+(1047552&f)|1023&t.charCodeAt(++i))>>18),u(128|f>>12&63),u(128|f>>6&63),u(128|63&f)):(u(224|f>>12),u(128|f>>6&63),u(128|63&f))}return D(s,0,a)}function rn(t,n){if(n){for(var r="",e=0;e<t.length;e+=16384)r+=String.fromCharCode.apply(null,t.subarray(e,e+16384));return r}if(Wt)return Wt.decode(t);var i=$t(t),o=i.s;return(r=i.r).length&&I(8),o}_e.EncodeUTF8=tn,_e.strToU8=nn,_e.strFromU8=rn;var en=function(t){return 1==t?3:t<6?2:9==t?1:0},on=function(t,n){return n+30+ht(t,n+26)+ht(t,n+28)},sn=function(t,n,r){var e=ht(t,n+28),i=rn(t.subarray(n+46,n+46+e),!(2048&ht(t,n+8))),o=n+46+e,s=ft(t,n+20),a=r&&4294967295==s?an(t,o):[s,ft(t,n+24),ft(t,n+42)],u=a[0],h=a[1],f=a[2];return[ht(t,n+10),u,h,i,o+ht(t,n+30)+ht(t,n+32),f]},an=function(t,n){for(;1!=ht(t,n);n+=4+ht(t,n+2));return[lt(t,n+12),lt(t,n+4),lt(t,n+20)]},un=function(t){var n=0;if(t)for(var r in t){var e=t[r].length;e>65535&&I(9),n+=e+4}return n},hn=function(t,n,r,e,i,o,s,a){var u=e.length,h=r.extra,f=a&&a.length,l=un(h);ct(t,n,null!=s?33639248:67324752),n+=4,null!=s&&(t[n++]=20,t[n++]=r.os),t[n]=20,n+=2,t[n++]=r.flag<<1|(o<0&&8),t[n++]=i&&8,t[n++]=255&r.compression,t[n++]=r.compression>>8;var c=new Date(null==r.mtime?Date.now():r.mtime),p=c.getFullYear()-1980;if((p<0||p>119)&&I(10),ct(t,n,p<<25|c.getMonth()+1<<21|c.getDate()<<16|c.getHours()<<11|c.getMinutes()<<5|c.getSeconds()>>1),n+=4,-1!=o&&(ct(t,n,r.crc),ct(t,n+4,o<0?-o-2:o),ct(t,n+8,r.size)),ct(t,n+12,u),ct(t,n+14,l),n+=16,null!=s&&(ct(t,n,f),ct(t,n+6,r.attrs),ct(t,n+10,s),n+=14),t.set(e,n),n+=u,l)for(var v in h){var d=h[v],g=d.length;ct(t,n,+v),ct(t,n+2,g),t.set(d,n+4),n+=4+g}return f&&(t.set(a,n),n+=f),n},fn=function(t,n,r,e,i){ct(t,n,101010256),ct(t,n+8,r),ct(t,n+10,r),ct(t,n+12,e),ct(t,n+16,i)},ln=function(){function t(t){this.filename=t,this.c=Y(),this.size=0,this.compression=0}return t.prototype.process=function(t,n){this.ondata(null,t,n)},t.prototype.push=function(t,n){this.ondata||I(5),this.c.p(t),this.size+=t.length,n&&(this.crc=this.c.d()),this.process(t,n||!1)},t}();_e.ZipPassThrough=ln;var cn=function(){function t(t,n){var r=this;n||(n={}),ln.call(this,t),this.d=new wt(n,(function(t,n){r.ondata(null,t,n)})),this.compression=8,this.flag=en(n.level)}return t.prototype.process=function(t,n){try{this.d.push(t,n)}catch(t){this.ondata(t,null,n)}},t.prototype.push=function(t,n){ln.prototype.push.call(this,t,n)},t}();_e.ZipDeflate=cn;var pn=function(){function t(t,n){var r=this;n||(n={}),ln.call(this,t),this.d=new xt(n,(function(t,n,e){r.ondata(t,n,e)})),this.compression=8,this.flag=en(n.level),this.terminate=this.d.terminate}return t.prototype.process=function(t,n){this.d.push(t,n)},t.prototype.push=function(t,n){ln.prototype.push.call(this,t,n)},t}();_e.AsyncZipDeflate=pn;var vn=function(){function t(t){this.ondata=t,this.u=[],this.d=1}return t.prototype.add=function(t){var r=this;if(this.ondata||I(5),2&this.d)this.ondata(I(4+8*(1&this.d),0,1),null,!1);else{var e=nn(t.filename),i=e.length,o=t.comment,s=o&&nn(o),a=i!=t.filename.length||s&&o.length!=s.length,u=i+un(t.extra)+30;i>65535&&this.ondata(I(11,0,1),null,!1);var h=new n(u);hn(h,0,t,e,a,-1);var f=[h],l=function(){for(var t=0,n=f;t<n.length;t++)r.ondata(null,n[t],!1);f=[]},c=this.d;this.d=0;var p=this.u.length,v=Q(t,{f:e,u:a,o:s,t:function(){t.terminate&&t.terminate()},r:function(){if(l(),c){var t=r.u[p+1];t?t.r():r.d=1}c=1}}),d=0;t.ondata=function(e,i,o){if(e)r.ondata(e,i,o),r.terminate();else if(d+=i.length,f.push(i),o){var s=new n(16);ct(s,0,134695760),ct(s,4,t.crc),ct(s,8,d),ct(s,12,t.size),f.push(s),v.c=d,v.b=u+d+16,v.crc=t.crc,v.size=t.size,c&&v.r(),c=1}else c&&l()},this.u.push(v)}},t.prototype.end=function(){var t=this;2&this.d?this.ondata(I(4+8*(1&this.d),0,1),null,!0):(this.d?this.e():this.u.push({r:function(){1&t.d&&(t.u.splice(-1,1),t.e())},t:function(){}}),this.d=3)},t.prototype.e=function(){for(var t=0,r=0,e=0,i=0,o=this.u;i<o.length;i++)e+=46+(h=o[i]).f.length+un(h.extra)+(h.o?h.o.length:0);for(var s=new n(e+22),a=0,u=this.u;a<u.length;a++){var h;hn(s,t,h=u[a],h.f,h.u,-h.c-2,r,h.o),t+=46+h.f.length+un(h.extra)+(h.o?h.o.length:0),r+=h.b}fn(s,t,this.u.length,e,r),this.ondata(null,s,!0),this.d=2},t.prototype.terminate=function(){for(var t=0,n=this.u;t<n.length;t++)n[t].t();this.d=2},t}();function dn(t,r,e){e||(e=r,r={}),"function"!=typeof e&&I(7);var i={};Rt(t,"",i,r);var o=Object.keys(i),s=o.length,a=0,u=0,h=s,f=Array(s),l=[],c=function(){for(var t=0;t<l.length;++t)l[t]()},p=function(t,n){xn((function(){e(t,n)}))};xn((function(){p=e}));var v=function(){var t=new n(u+22),r=a,e=u-a;u=0;for(var i=0;i<h;++i){var o=f[i];try{var s=o.c.length;hn(t,u,o,o.f,o.u,s);var l=30+o.f.length+un(o.extra),c=u+l;t.set(o.c,c),hn(t,a,o,o.f,o.u,s,u,o.m),a+=16+l+(o.m?o.m.length:0),u=c+s}catch(t){return p(t,null)}}fn(t,a,f.length,e,r),p(null,t)};s||v();for(var d=function(t){var n=o[t],r=i[n],e=r[0],h=r[1],d=Y(),g=e.length;d.p(e);var y=nn(n),m=y.length,b=h.comment,w=b&&nn(b),x=w&&w.length,z=un(h.extra),k=0==h.level?0:8,M=function(r,e){if(r)c(),p(r,null);else{var i=e.length;f[t]=Q(h,{size:g,crc:d.d(),c:e,f:y,m:w,u:m!=n.length||w&&b.length!=x,compression:k}),a+=30+m+z+i,u+=76+2*(m+z)+(x||0)+i,--s||v()}};if(m>65535&&M(I(11,0,1),null),k)if(g<16e4)try{M(null,kt(e,h))}catch(t){M(t,null)}else l.push(zt(e,h,M));else M(null,e)},g=0;g<h;++g)d(g);return c}function gn(t,r){r||(r={});var e={},i=[];Rt(t,"",e,r);var o=0,s=0;for(var a in e){var u=e[a],h=u[0],f=u[1],l=0==f.level?0:8,c=(M=nn(a)).length,p=f.comment,v=p&&nn(p),d=v&&v.length,g=un(f.extra);c>65535&&I(11);var y=l?kt(h,f):h,m=y.length,b=Y();b.p(h),i.push(Q(f,{size:h.length,crc:b.d(),c:y,f:M,m:v,u:c!=a.length||v&&p.length!=d,o:o,compression:l})),o+=30+c+g+m,s+=76+2*(c+g)+(d||0)+m}for(var w=new n(s+22),x=o,z=s-o,k=0;k<i.length;++k){var M;hn(w,(M=i[k]).o,M,M.f,M.u,M.c.length);var S=30+M.f.length+un(M.extra);w.set(M.c,M.o+S),hn(w,o,M,M.f,M.u,M.c.length,M.o,M.m),o+=16+S+(M.m?M.m.length:0)}return fn(w,o,i.length,z,x),w}_e.Zip=vn,_e.zip=dn,_e.zipSync=gn;var yn=function(){function t(){}return t.prototype.push=function(t,n){this.ondata(null,t,n)},t.compression=0,t}();_e.UnzipPassThrough=yn;var mn=function(){function t(){var t=this;this.i=new Mt((function(n,r){t.ondata(null,n,r)}))}return t.prototype.push=function(t,n){try{this.i.push(t,n)}catch(t){this.ondata(t,null,n)}},t.compression=8,t}();_e.UnzipInflate=mn;var bn=function(){function t(t,n){var r=this;n<32e4?this.i=new Mt((function(t,n){r.ondata(null,t,n)})):(this.i=new St((function(t,n,e){r.ondata(t,n,e)})),this.terminate=this.i.terminate)}return t.prototype.push=function(t,n){this.i.terminate&&(t=D(t,0)),this.i.push(t,n)},t.compression=8,t}();_e.AsyncUnzipInflate=bn;var wn=function(){function t(t){this.onfile=t,this.k=[],this.o={0:yn},this.p=N}return t.prototype.push=function(t,r){var e=this;if(this.onfile||I(5),this.p||I(4),this.c>0){var i=Math.min(this.c,t.length),o=t.subarray(0,i);if(this.c-=i,this.d?this.d.push(o,!this.c):this.k[0].push(o),(t=t.subarray(i)).length)return this.push(t,r)}else{var s=0,a=0,u=void 0,h=void 0;this.p.length?t.length?((h=new n(this.p.length+t.length)).set(this.p),h.set(t,this.p.length)):h=this.p:h=t;for(var f=h.length,l=this.c,c=l&&this.d,p=function(){var t,n=ft(h,a);if(67324752==n){s=1,u=a,v.d=null,v.c=0;var r=ht(h,a+6),i=ht(h,a+8),o=2048&r,c=8&r,p=ht(h,a+26),d=ht(h,a+28);if(f>a+30+p+d){var g=[];v.k.unshift(g),s=2;var y,m=ft(h,a+18),b=ft(h,a+22),w=rn(h.subarray(a+30,a+=30+p),!o);4294967295==m?(t=c?[-2]:an(h,a),m=t[0],b=t[1]):c&&(m=-1),a+=d,v.c=m;var x={name:w,compression:i,start:function(){if(x.ondata||I(5),m){var t=e.o[i];t||x.ondata(I(14,"unknown compression type "+i,1),null,!1),(y=m<0?new t(w):new t(w,m,b)).ondata=function(t,n,r){x.ondata(t,n,r)};for(var n=0,r=g;n<r.length;n++)y.push(r[n],!1);e.k[0]==g&&e.c?e.d=y:y.push(N,!0)}else x.ondata(null,N,!0)},terminate:function(){y&&y.terminate&&y.terminate()}};m>=0&&(x.size=m,x.originalSize=b),v.onfile(x)}return"break"}if(l){if(134695760==n)return u=a+=12+(-2==l&&8),s=3,v.c=0,"break";if(33639248==n)return u=a-=4,s=3,v.c=0,"break"}},v=this;a<f-4&&"break"!==p();++a);if(this.p=N,l<0){var d=h.subarray(0,s?u-12-(-2==l&&8)-(134695760==ft(h,u-16)&&4):a);c?c.push(d,!!s):this.k[+(2==s)].push(d)}if(2&s)return this.push(h.subarray(a),r);this.p=h.subarray(a)}r&&(this.c&&I(13),this.p=null)},t.prototype.register=function(t){this.o[t.compression]=t},t}();_e.Unzip=wn;var xn="function"==typeof queueMicrotask?queueMicrotask:"function"==typeof setTimeout?setTimeout:function(t){t()};function zn(t,r,e){e||(e=r,r={}),"function"!=typeof e&&I(7);var i=[],o=function(){for(var t=0;t<i.length;++t)i[t]()},s={},a=function(t,n){xn((function(){e(t,n)}))};xn((function(){a=e}));for(var u=t.length-22;101010256!=ft(t,u);--u)if(!u||t.length-u>65558)return a(I(13,0,1),null),o;var h=ht(t,u+8);if(h){var f=h,l=ft(t,u+16),c=4294967295==l||65535==f;if(c){var p=ft(t,u-12);(c=101075792==ft(t,p))&&(f=h=ft(t,p+32),l=ft(t,p+48))}for(var v=r&&r.filter,d=function(r){var e=sn(t,l,c),u=e[0],f=e[1],p=e[2],d=e[3],g=e[4],y=on(t,e[5]);l=g;var m=function(t,n){t?(o(),a(t,null)):(n&&(s[d]=n),--h||a(null,s))};if(!v||v({name:d,size:f,originalSize:p,compression:u}))if(u)if(8==u){var b=t.subarray(y,y+f);if(p<524288||f>.8*p)try{m(null,Tt(b,{out:new n(p)}))}catch(t){m(t,null)}else i.push(At(b,{size:p},m))}else m(I(14,"unknown compression type "+u,1),null);else m(null,D(t,y,y+f));else m(null,null)},g=0;g<f;++g)d()}else a(null,{});return o}function kn(t,r){for(var e={},i=t.length-22;101010256!=ft(t,i);--i)(!i||t.length-i>65558)&&I(13);var o=ht(t,i+8);if(!o)return{};var s=ft(t,i+16),a=4294967295==s||65535==o;if(a){var u=ft(t,i-12);(a=101075792==ft(t,u))&&(o=ft(t,u+32),s=ft(t,u+48))}for(var h=r&&r.filter,f=0;f<o;++f){var l=sn(t,s,a),c=l[0],p=l[1],v=l[2],d=l[3],g=l[4],y=on(t,l[5]);s=g,h&&!h({name:d,size:p,originalSize:v,compression:c})||(c?8==c?e[d]=Tt(t.subarray(y,y+p),{out:new n(v)}):I(14,"unknown compression type "+c):e[d]=D(t,y,y+p))}return e}_e.unzip=zn,_e.unzipSync=kn;return _e});
 </script>
-<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script>
 // ============================================================
 // STATE
@@ -556,8 +603,9 @@ const LOG_KIND_MAPS = {
   Type1: {1:['Debug','#804000'],2:['Alarm','#ff0000'],3:['System','#00c000'],4:['User','#0080ff'],5:['Process','#0000ff'],6:['Comm','#ff00ff'],8:['Mark Info','#0096c8'],9:['Thread Info','#6e0f96'],10:['Laser Info','#008080'],11:['Cam Info','#ff8040'],12:['Comm Serial','#ff8080'],13:['Align Process','#ff80ff'],14:['Align Result','#ff6496'],15:['Atten Process','#326400'],16:['Atten Result','#3264aa'],17:['PosSens Process','#963280'],18:['PosSens Result','#008080'],40:['IPC Send','#ff00ff'],41:['IPC Recv','#ff00ff'],42:['IO In','#00ae57'],43:['IO Out','#0064c8'],44:['Unit Info','#fa3296'],45:['PLC Process','#0000ff'],46:['PLC System','#00c000'],47:['PLC IO Up In','#c800ff'],48:['PLC IO Up Out','#0064c8'],49:['PLC IO Dn In','#c800ff'],50:['PLC IO Dn Out','#0064c8'],[CORRUPTION_LOGKIND]:['◆ CORRUPT','#ff0000']},
   Type2: {0:['UNKNOWN','#000'],1:['SETTING','#20c020'],2:['DEBUG','#606060'],3:['SWDEBUG','#8080e8'],4:['SW_ALARM','#ff4040'],5:['SWDEBUG1','#8080c8'],6:['SWDEBUG2','#8080c0'],7:['SWDEBUG3','#8080b4'],8:['WARNING','#ff6600'],9:['ALARM','#ff0000'],10:['SYSTEM','#008000'],11:['PROCESS','#0000ff'],12:['TACT_TIME','#c080c0'],13:['RESERVE','#808080'],14:['USER','#0080ff'],15:['BUTTON','#6060ff'],16:['COMM','#c00060'],17:['COMMIO','#c06060'],18:['NETWORK','#c08060'],[CORRUPTION_LOGKIND]:['◆ CORRUPT','#ff0000']},
   Type3: {0:['Debug','#808080'],1:['SWDebug','#00bfff'],2:['Manager','#c71585'],3:['Library','#9400d3'],4:['Setting','#90ee90'],5:['System','#7cfc00'],6:['Device','#5f9ea0'],7:['Recipe','#008b8b'],8:['Form','#daa520'],9:['User','#f0e68c'],10:['Button','#add8e6'],11:['Comm','#bdb76b'],12:['Network','#ffa500'],13:['Process','#ffffff'],14:['TactTime','#ffc0cb'],15:['Warning','#ff8c00'],16:['Alarm','#ff0000'],[CORRUPTION_LOGKIND]:['◆ CORRUPT','#ff0000']},
-  Type5: {0:['System','#64b4ff'],1:['Process','#b4ffb4'],2:['Alarm','#ff6464'],3:['Debug','#b4b4b4'],4:['CommIn','#ffc864'],5:['CommOut','#c896ff'],6:['User','#ffff96'],[CORRUPTION_LOGKIND]:['◆ CORRUPT','#ff0000']},
-  Type6: {0:['Message','#000'],1:['Content','#000'],[CORRUPTION_LOGKIND]:['◆ CORRUPT','#ff0000']}
+  Type5: {0:['System','#64b4ff'],1:['Process','#b4ffb4'],2:['Alarm','#ff6464'],3:['Debug','#b4b4b4'],4:['CommIn','#ffc864'],5:['CommOut','#c896ff'],6:['User','#ffff96'],7:['Warning','#ffa500'],8:['Data','#0096c8'],[CORRUPTION_LOGKIND]:['◆ CORRUPT','#ff0000']},
+  PlainText: {0:['Text','#000']}
+  // Type6: decodeType6 가 SECS 메시지 이름으로 만드는 동적 매핑(type6KindMap)을 쓴다
 };
 
 // ============================================================
@@ -673,40 +721,47 @@ async function handleZipFile(zipBytes, zipName) {
 function showZipPicker(unzipped, logFiles, zipName) {
   // Sort by name
   logFiles.sort();
-  const modal = document.getElementById('manualModal');
-  const content = modal.querySelector('.manual-content');
-  content.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <h3 style="margin:0">Select log file from ZIP</h3>
-      <button class="icon-btn" onclick="document.getElementById('manualModal').classList.remove('show')">✕</button>
-    </div>
-    <p style="margin:6px 0;color:var(--text-dim);font-size:11px">${zipName} — ${logFiles.length} log files</p>
-    <div style="display:flex;flex-direction:column;gap:4px;margin-top:8px">
-      ${logFiles.map(name => {
-        const size = unzipped[name].byteLength;
-        const sizeStr = size > 1048576 ? (size/1048576).toFixed(1)+'MB' : (size/1024).toFixed(0)+'KB';
-        return `<button onclick="pickZipEntry(this.dataset.name)" data-name="${name.replace(/"/g,'&quot;')}"
-          style="text-align:left;padding:8px 10px;border:1px solid var(--border);border-radius:6px;
-          background:var(--bg);color:var(--text);cursor:pointer;font-size:12px;font-family:var(--font-mono)">
-          ${name.split('/').pop()} <span style="color:var(--text-dim);font-size:10px">${sizeStr}</span>
-        </button>`;
-      }).join('')}
-    </div>`;
-  // Store unzipped data temporarily
+  // ZIP 파일명/엔트리 이름은 신뢰할 수 없는 문자열 — innerHTML 없이 textContent 로만 넣는다
+  document.getElementById('zipInfo').textContent = `${zipName} — ${logFiles.length} log files`;
+  const list = document.getElementById('zipList');
+  list.textContent = '';
+  for (const name of logFiles) {
+    const size = unzipped[name].byteLength;
+    const sizeStr = size > 1048576 ? (size/1048576).toFixed(1)+'MB' : (size/1024).toFixed(0)+'KB';
+    const btn = document.createElement('button');
+    btn.className = 'zip-entry';
+    btn.textContent = name.split('/').pop() + ' ';
+    const sizeEl = document.createElement('span');
+    sizeEl.className = 'zip-size';
+    sizeEl.textContent = sizeStr;
+    btn.appendChild(sizeEl);
+    btn.onclick = () => pickZipEntry(name);
+    list.appendChild(btn);
+  }
+  // Store unzipped data temporarily (closeZipPicker 가 해제)
   window._zipData = unzipped;
-  modal.classList.add('show');
+  document.getElementById('zipModal').classList.add('show');
 }
 
+function closeZipPicker() {
+  document.getElementById('zipModal').classList.remove('show');
+  document.getElementById('zipList').textContent = '';
+  delete window._zipData;
+}
+document.getElementById('zipClose').onclick = closeZipPicker;
+document.getElementById('zipModal').onclick = e => { if(e.target === e.currentTarget) closeZipPicker(); };
+
 async function pickZipEntry(name) {
-  document.getElementById('manualModal').classList.remove('show');
+  const bytes = window._zipData && window._zipData[name];
+  closeZipPicker();
+  if (!bytes) return;
   showProgress('Loading: ' + name);
   try {
-    await loadLogBytes(window._zipData[name], name);
+    await loadLogBytes(bytes, name);
   } catch(err) {
     toast('Error: ' + err.message);
   }
   hideProgress();
-  delete window._zipData;
 }
 
 async function loadLogBytes(bytes, fileName) {
@@ -740,38 +795,112 @@ async function loadLogBytes(bytes, fileName) {
   hideProgress();
 }
 
+// 로그 타입 감지 — C# CSLogManager.DetectLogType 과 같은 순서의 시험 디코딩:
+// Type5 매직 → 바이너리(Type2 → Type1) → UTF-16(Type3 또는 PlainText) → 텍스트(Type4 → Type6 → PlainText)
+const DETECT_TRIAL_LINES = 3;
+
 function detectLogType(bytes) {
-  if (bytes.length < 20) return 'Type4';
-  // Type5: HLOG magic
-  if (bytes[0]===0x48 && bytes[1]===0x4C && bytes[2]===0x4F && bytes[3]===0x47) return 'Type5';
+  if (bytes.length === 0) return 'PlainText';
+  // 1단계: Type5 "HLOG" 매직 — 확정적
+  if (bytes.length >= 4 && bytes[0]===0x48 && bytes[1]===0x4C && bytes[2]===0x4F && bytes[3]===0x47) return 'Type5';
 
-  // Type3: alternating null bytes pattern (UTF-16 LE: low < 0x80, high == 0x00)
-  let isType3 = true;
+  // 2단계: 바이너리 시험 디코딩 (앞 4096 바이트에서 연속 레코드 검증).
+  // Type2 헤더(W.W.I.I.)는 교대 null 패턴이라 UTF-16 과 혼동되므로 Unicode 판별보다 먼저 한다.
+  const binLen = Math.min(4096, bytes.length);
+  if (binLen >= 43 && // 28(header) + 15(min record)
+      bytes[0]===0x57 && bytes[2]===0x57 && bytes[4]===0x49 && bytes[6]===0x49 &&
+      tryValidateBinaryRecords(bytes, binLen, validateType2Record, DETECT_TRIAL_LINES, 28)) return 'Type2';
+  if (binLen >= 10 && tryValidateBinaryRecords(bytes, binLen, validateType1Record, DETECT_TRIAL_LINES, 0)) return 'Type1';
+
+  // 3단계: UTF-16 텍스트 → Type3 시험 디코딩, 실패하면 PlainText (decodePlainText 가 UTF-16 으로 디코딩)
+  if (isUnicodeText(bytes)) {
+    const lines = readPreviewLines(bytes, 'utf-16le');
+    return lines.length > 0 && trialDecodeType3(lines) >= DETECT_TRIAL_LINES ? 'Type3' : 'PlainText';
+  }
+
+  // 4단계: 텍스트(CP949, BOM 우선) 시험 디코딩
+  const lines = readPreviewLines(bytes, 'euc-kr');
+  if (lines.length > 0) {
+    if (trialDecodeType4(lines) >= DETECT_TRIAL_LINES) return 'Type4';
+    if (trialDecodeType6(lines) >= DETECT_TRIAL_LINES) return 'Type6';
+  }
+  return 'PlainText';
+}
+
+// BOM FF FE, 또는 앞 20바이트가 모두 (<0x80, 0x00) 쌍이면 UTF-16 LE 텍스트
+function isUnicodeText(bytes) {
+  if (bytes.length >= 2 && bytes[0]===0xFF && bytes[1]===0xFE) return true;
+  if (bytes.length < 20) return false;
   for (let i=0; i<20; i+=2) {
-    if (!(bytes[i] < 0x80 && bytes[i+1] === 0x00)) { isType3 = false; break; }
+    if (!(bytes[i] < 0x80 && bytes[i+1] === 0x00)) return false;
   }
+  return true;
+}
 
-  // Type2: bytes[0]=='W' && bytes[2]=='W' && bytes[4]=='I' && bytes[6]=='I'
-  if (bytes[0]===0x57 && bytes[2]===0x57 && bytes[4]===0x49 && bytes[6]===0x49) return 'Type2';
-
-  // Type3: BOM (FF FE) or pattern match
-  if ((bytes[0]===0xFF && bytes[1]===0xFE) || isType3) return 'Type3';
-
-  // Type4: '[' at start, or UTF-8 BOM (EF BB BF) followed by '['
-  if (bytes[0] === 0x5B) return 'Type4';
-  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF && bytes[3]===0x5B) return 'Type4';
-
-  // Type6: YYYY-MM-DD date pattern
-  let startIdx = 0;
-  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) startIdx = 3;
-  if (startIdx + 10 <= bytes.length) {
-    const isDigit = b => b >= 0x30 && b <= 0x39;
-    if (isDigit(bytes[startIdx]) && isDigit(bytes[startIdx+1]) && isDigit(bytes[startIdx+2]) && isDigit(bytes[startIdx+3]) &&
-        bytes[startIdx+4]===0x2D && isDigit(bytes[startIdx+5]) && isDigit(bytes[startIdx+6]) &&
-        bytes[startIdx+7]===0x2D && isDigit(bytes[startIdx+8]) && isDigit(bytes[startIdx+9])) return 'Type6';
+// 바이너리 레코드 연속 검증: startOffset 부터 requiredCount 개 레코드가 validator 를 통과하는지.
+// 버퍼 끝에 닿으면 2개 이상 통과로 충분하다.
+function tryValidateBinaryRecords(bytes, bufLen, validator, requiredCount, startOffset) {
+  let pos = startOffset;
+  for (let i = 0; i < requiredCount; i++) {
+    const recLen = validator(bytes, pos, bufLen);
+    if (recLen < 0) return false;
+    pos += recLen;
+    if (pos >= bufLen) return i >= 1;
   }
+  return true;
+}
 
-  return 'Type1';
+// .NET StreamReader(detectEncodingFromByteOrderMarks: true) 처럼 BOM 이 있으면 BOM 의 인코딩, 없으면 기본 인코딩
+function decodeText(bytes, defaultEncoding) {
+  let enc = defaultEncoding, start = 0;
+  if (bytes.length >= 3 && bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) { enc = 'utf-8'; start = 3; }
+  else if (bytes.length >= 2 && bytes[0]===0xFF && bytes[1]===0xFE) { enc = 'utf-16le'; start = 2; }
+  else if (bytes.length >= 2 && bytes[0]===0xFE && bytes[1]===0xFF) { enc = 'utf-16be'; start = 2; }
+  return new TextDecoder(enc, {ignoreBOM:true}).decode(bytes.subarray(start));
+}
+
+// .NET StreamReader.ReadLine 과 같은 줄 분리: \r\n, \n, \r 이 줄 끝이고, 마지막 줄바꿈 뒤에 빈 줄을 만들지 않는다
+function splitLines(text) {
+  const lines = text.split(/\r\n|\n|\r/);
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+// 감지용 미리보기 줄 (빈 줄 포함, 최대 DETECT_TRIAL_LINES*5). 큰 파일 전체를 디코딩하지 않도록 앞부분부터 늘려 가며 읽는다.
+function readPreviewLines(bytes, defaultEncoding) {
+  const maxLines = DETECT_TRIAL_LINES * 5;
+  for (let n = 65536; ; n *= 4) {
+    const end = Math.min(n, bytes.length);
+    const lines = splitLines(decodeText(bytes.subarray(0, end), defaultEncoding));
+    // maxLines 보다 많으면 앞의 maxLines 줄은 모두 줄바꿈으로 끝난 완전한 줄이다
+    if (end === bytes.length || lines.length > maxLines) return lines.slice(0, maxLines);
+  }
+}
+
+// 시험 디코딩 — 각 디코더와 같은 파서로 만들어지는 항목 수 (C# TrialDecodeType3/4/6)
+function trialDecodeType3(lines) {
+  let count = 0;
+  for (const line of lines) if (trimWs(line) && parseType3Line(line)) count++;
+  return count;
+}
+function trialDecodeType4(lines) {
+  let count = 0;
+  for (const line of lines) {
+    if (!trimWs(line)) continue;
+    if (!parseType4Line(line)) return count; // 파싱 실패 시 중단
+    count++;
+  }
+  return count;
+}
+function trialDecodeType6(lines) {
+  let count = 0, hasTime = false;
+  for (const line of lines) {
+    if (!trimWs(line)) continue;
+    if (line[0] === '\t' || line[0] === ' ') { if (hasTime) count++; continue; } // 연속 줄
+    if (parseType6Line(line)) { hasTime = true; count++; }
+    else if (!hasTime) return 0; // 첫 유효 줄부터 파싱 실패 → Type6 아님
+  }
+  return count;
 }
 
 function getDecoder(type) {
@@ -782,9 +911,35 @@ function getDecoder(type) {
     case 'Type4': return decodeType4;
     case 'Type5': return decodeType5;
     case 'Type6': return decodeType6;
+    case 'PlainText': return decodePlainText;
     default: return decodeType4;
   }
 }
+
+// .NET int.TryParse(NumberStyles.Integer) 규칙: 앞뒤 공백(\t\n\v\f\r 와 space)·부호 허용, ASCII 숫자, int32 범위. 실패하면 null.
+function parseDotNetInt(s) {
+  const m = /^[\t\n\v\f\r ]*([+-]?\d+)[\t\n\v\f\r ]*$/.exec(s);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return v >= -2147483648 && v <= 2147483647 ? v : null;
+}
+
+// 유효한 날짜/시각일 때만 Date (2월 30일 같은 값은 null). 0~99년도 그대로 쓰도록 setFullYear 사용.
+function makeValidDate(year, month, day, h, mi, s, ms) {
+  if (month < 1 || month > 12 || day < 1 || h > 23 || mi > 59 || s > 59) return null;
+  const t = new Date(2000, 0, 1);
+  t.setFullYear(year, month - 1, day);
+  if (t.getDate() !== day) return null;
+  t.setHours(h, mi, s, ms);
+  return t;
+}
+
+// 손상 마커 항목 — 직전 정상 항목의 시간/ms 를 이어받아 정렬/델타가 깨지지 않게 (C# CreateCorruptionMarker)
+function pushCorruptionMarker(fallbackTime, content) {
+  const last = allLogs.length > 0 ? allLogs[allLogs.length-1] : null;
+  allLogs.push({time: last ? last.time : fallbackTime, kind:CORRUPTION_LOGKIND, content, ms: last ? last.ms : 0});
+}
+function hex(n) { return n.toString(16).toUpperCase(); }
 
 // --- CP949 Decoder (EUC-KR superset) ---
 // Browser's TextDecoder('euc-kr') handles CP949. But for binary log slices,
@@ -804,40 +959,50 @@ function decodeCP949(bytes, start, len) {
 
 // --- TYPE1 DECODER: Binary with fixed header ---
 // Record: hour(1) + minute(1) + second(1) + millisecond(4) + logKind(1) + textLength(1) + text(N) + separator(1)
-function isValidType1Header(bytes, i, totalLen) {
-  if (i + 9 > totalLen) return false;
-  const h = bytes[i], m = bytes[i+1], s = bytes[i+2];
-  if (h > 23 || m > 59 || s > 59) return false;
-  const textLen = bytes[i+8];
-  if (textLen === 0) return false;
-  if (i + 9 + textLen > totalLen) return false;
-  return true;
+// 바이너리 레코드 검증기: pos 의 레코드가 유효하면 레코드 길이, 아니면 -1 (C# ValidateType1Record / ValidateType2Record)
+function validateType1Record(bytes, pos, totalLen) {
+  if (pos + 9 > totalLen) return -1;
+  if (bytes[pos] > 23 || bytes[pos+1] > 59 || bytes[pos+2] > 59) return -1;
+  const textLen = bytes[pos+8];
+  if (textLen === 0) return -1;
+  const recordEnd = pos + 9 + textLen;
+  if (recordEnd > totalLen) return -1;
+  return 9 + textLen + (recordEnd < totalLen ? 1 : 0); // 파일 끝이 아니면 구분자 1바이트
 }
 
-function getType1RecordLen(bytes, i, totalLen) {
-  const textLen = bytes[i+8];
-  const recordEnd = i + 9 + textLen;
-  return 9 + textLen + (recordEnd < totalLen ? 1 : 0);
+// 레코드 첫 3바이트(시:분:초)를 초 단위로 (Type1/Type2 공통 레이아웃)
+function recordTimeSec(bytes, pos) {
+  return bytes[pos] * 3600 + bytes[pos+1] * 60 + bytes[pos+2];
 }
 
-function getType1TimeSec(bytes, i) {
-  return bytes[i] * 3600 + bytes[i+1] * 60 + bytes[i+2];
+// 손상 전 마지막 항목의 시각(초), 항목이 없으면 -1
+function lastLogTimeSec() {
+  if (allLogs.length === 0) return -1;
+  const t = allLogs[allLogs.length-1].time;
+  return t.getHours()*3600 + t.getMinutes()*60 + t.getSeconds();
 }
 
-// Lookahead resync: 5 consecutive valid records with non-decreasing time >= lastGoodTimeSec
-function findType1Resync(bytes, startPos, totalLen, lastGoodTimeSec) {
+// Lookahead resync (C# FindBinaryResync): 손상 구간 뒤에서 연속 5개의 정상 레코드가 시작되는 위치.
+// 1차: 시간이 손상 전 마지막 정상 레코드 이후로 단조 증가하는 위치 (오탐 방지).
+// 2차: 1차가 파일 끝까지 실패하면 손상 전 시간 조건 없이 다시 찾는다 — 재부팅 후 시계 역행이나 자정 넘김 때문에
+//      나머지 데이터 전체를 버리지 않도록. (후보 레코드끼리의 단조 증가는 계속 검사)
+function findBinaryResync(bytes, startPos, totalLen, lastGoodTimeSec, validator, minRecordLen) {
   const LOOKAHEAD = 5;
-  for (let p = startPos; p < totalLen - 9; p++) {
-    let pos = p, ok = true, prevTimeSec = lastGoodTimeSec;
-    for (let n = 0; n < LOOKAHEAD; n++) {
-      if (!isValidType1Header(bytes, pos, totalLen)) { ok = false; break; }
-      const timeSec = getType1TimeSec(bytes, pos);
-      if (prevTimeSec >= 0 && timeSec < prevTimeSec) { ok = false; break; }
-      prevTimeSec = timeSec;
-      pos += getType1RecordLen(bytes, pos, totalLen);
-      if (pos >= totalLen) break;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let p = startPos; p < totalLen - minRecordLen; p++) {
+      let pos = p, ok = true, prevTimeSec = pass === 0 ? lastGoodTimeSec : -1;
+      for (let n = 0; n < LOOKAHEAD; n++) {
+        const len = validator(bytes, pos, totalLen);
+        if (len < 0) { ok = false; break; }
+        const timeSec = recordTimeSec(bytes, pos);
+        if (prevTimeSec >= 0 && timeSec < prevTimeSec) { ok = false; break; }
+        prevTimeSec = timeSec;
+        pos += len;
+        if (pos >= totalLen) break;
+      }
+      if (ok) return p;
     }
-    if (ok) return p;
+    if (lastGoodTimeSec < 0) break; // 시간 조건이 없었으면 2차는 1차와 같음
   }
   return -1;
 }
@@ -849,44 +1014,33 @@ async function decodeType1(bytes) {
   const totalLen = bytes.length;
   while (i + 9 <= totalLen) {
     if (loadCancelled) return;
-    if (!isValidType1Header(bytes, i, totalLen)) {
+    const recLen = validateType1Record(bytes, i, totalLen);
+    if (recLen < 0) {
       const corruptStart = i;
-      const lastGoodTimeSec = allLogs.length > 0
-        ? (allLogs[allLogs.length-1].time.getHours()*3600 + allLogs[allLogs.length-1].time.getMinutes()*60 + allLogs[allLogs.length-1].time.getSeconds())
-        : -1;
-      const resyncPos = findType1Resync(bytes, i + 1, totalLen, lastGoodTimeSec);
+      const resyncPos = findBinaryResync(bytes, i + 1, totalLen, lastLogTimeSec(), validateType1Record, 9);
       if (resyncPos < 0) break;
       const skippedBytes = resyncPos - corruptStart;
       skipped += skippedBytes;
-      const markerTime = allLogs.length > 0 ? allLogs[allLogs.length-1].time : new Date(2000,0,1);
-      const markerMs = allLogs.length > 0 ? allLogs[allLogs.length-1].ms : 0;
-      allLogs.push({time:markerTime, kind:CORRUPTION_LOGKIND,
-        content:`>>> CORRUPTED DATA: ${skippedBytes.toLocaleString()} bytes skipped (offset 0x${corruptStart.toString(16).toUpperCase()} ~ 0x${resyncPos.toString(16).toUpperCase()}) <<<`,
-        ms:markerMs});
+      pushCorruptionMarker(new Date(2000,0,1),
+        `>>> CORRUPTED DATA: ${skippedBytes.toLocaleString()} bytes skipped (offset 0x${hex(corruptStart)} ~ 0x${hex(resyncPos)}) <<<`);
       i = resyncPos;
       continue;
     }
     const hour = bytes[i], min = bytes[i+1], sec = bytes[i+2];
     const ms = (bytes[i+3] | (bytes[i+4]<<8) | (bytes[i+5]<<16) | ((bytes[i+6]<<24)>>>0)) >>> 0;
     const kind = bytes[i+7];
-    const textLen = bytes[i+8];
-    i += 9;
-    const content = decodeCP949(bytes, i, textLen);
-    i += textLen;
-    if (i < totalLen) i++;
+    const content = decodeCP949(bytes, i + 9, bytes[i+8]);
+    i += recLen;
     const time = new Date(2000,0,1, hour, min, sec, ms % 1000);
     allLogs.push({time, kind, content, ms});
     if (++count % 5000 === 0) { updateProgress(i / totalLen * 100, `${count} items...`); await yieldThread(); }
   }
-  // Trailing corruption
+  // Trailing corruption: remaining bytes that couldn't be parsed or resynced
   if (i < totalLen) {
     const trailing = totalLen - i;
     skipped += trailing;
-    const markerTime = allLogs.length > 0 ? allLogs[allLogs.length-1].time : new Date(2000,0,1);
-    const markerMs = allLogs.length > 0 ? allLogs[allLogs.length-1].ms : 0;
-    allLogs.push({time:markerTime, kind:CORRUPTION_LOGKIND,
-      content:`>>> CORRUPTED DATA: ${trailing.toLocaleString()} bytes skipped at end of file (offset 0x${i.toString(16).toUpperCase()} ~ 0x${totalLen.toString(16).toUpperCase()}) <<<`,
-      ms:markerMs});
+    pushCorruptionMarker(new Date(2000,0,1),
+      `>>> CORRUPTED DATA: ${trailing.toLocaleString()} bytes skipped at end of file (offset 0x${hex(i)} ~ 0x${hex(totalLen)}) <<<`);
   }
   if (skipped > 0) console.warn(`Type1: skipped ${skipped} corrupted bytes`);
 }
@@ -894,31 +1048,13 @@ async function decodeType1(bytes) {
 // --- TYPE2 DECODER: Extended binary ---
 // File header: 1 byte 'W' + 27 bytes skip = 28 bytes
 // Record: hour(1) + min(1) + sec(1) + skip(3) + ms(4) + skip(2) + kind(2) + textLen(1) + text(N) = 15 byte header
-function isValidType2Header(bytes, i, totalLen) {
-  if (i + 15 > totalLen) return false;
-  const h = bytes[i], m = bytes[i+1], s = bytes[i+2];
-  if (h > 23 || m > 59 || s > 59) return false;
-  const textLen = bytes[i+14];
-  if (textLen === 0) return false;
-  if (i + 15 + textLen > totalLen) return false;
-  return true;
-}
-
-function findType2Resync(bytes, startPos, totalLen, lastGoodTimeSec) {
-  const LOOKAHEAD = 5;
-  for (let p = startPos; p < totalLen - 15; p++) {
-    let pos = p, ok = true, prevTimeSec = lastGoodTimeSec;
-    for (let n = 0; n < LOOKAHEAD; n++) {
-      if (!isValidType2Header(bytes, pos, totalLen)) { ok = false; break; }
-      const timeSec = bytes[pos] * 3600 + bytes[pos+1] * 60 + bytes[pos+2];
-      if (prevTimeSec >= 0 && timeSec < prevTimeSec) { ok = false; break; }
-      prevTimeSec = timeSec;
-      pos += 15 + bytes[pos+14];
-      if (pos >= totalLen) break;
-    }
-    if (ok) return p;
-  }
-  return -1;
+function validateType2Record(bytes, pos, totalLen) {
+  if (pos + 15 > totalLen) return -1;
+  if (bytes[pos] > 23 || bytes[pos+1] > 59 || bytes[pos+2] > 59) return -1;
+  const textLen = bytes[pos+14];
+  if (textLen === 0) return -1;
+  if (pos + 15 + textLen > totalLen) return -1;
+  return 15 + textLen;
 }
 
 async function decodeType2(bytes) {
@@ -930,30 +1066,23 @@ async function decodeType2(bytes) {
   let skipped = 0;
   while (i + 15 <= totalLen) {
     if (loadCancelled) return;
-    if (!isValidType2Header(bytes, i, totalLen)) {
+    const recLen = validateType2Record(bytes, i, totalLen);
+    if (recLen < 0) {
       const corruptStart = i;
-      const lastGoodTimeSec = allLogs.length > 0
-        ? (allLogs[allLogs.length-1].time.getHours()*3600 + allLogs[allLogs.length-1].time.getMinutes()*60 + allLogs[allLogs.length-1].time.getSeconds())
-        : -1;
-      const resyncPos = findType2Resync(bytes, i + 1, totalLen, lastGoodTimeSec);
+      const resyncPos = findBinaryResync(bytes, i + 1, totalLen, lastLogTimeSec(), validateType2Record, 15);
       if (resyncPos < 0) break;
       const skippedBytes = resyncPos - corruptStart;
       skipped += skippedBytes;
-      const markerTime = allLogs.length > 0 ? allLogs[allLogs.length-1].time : new Date(2000,0,1);
-      const markerMs = allLogs.length > 0 ? allLogs[allLogs.length-1].ms : 0;
-      allLogs.push({time:markerTime, kind:CORRUPTION_LOGKIND,
-        content:`>>> CORRUPTED DATA: ${skippedBytes.toLocaleString()} bytes skipped (offset 0x${corruptStart.toString(16).toUpperCase()} ~ 0x${resyncPos.toString(16).toUpperCase()}) <<<`,
-        ms:markerMs});
+      pushCorruptionMarker(new Date(2000,0,1),
+        `>>> CORRUPTED DATA: ${skippedBytes.toLocaleString()} bytes skipped (offset 0x${hex(corruptStart)} ~ 0x${hex(resyncPos)}) <<<`);
       i = resyncPos;
       continue;
     }
     const hour = bytes[i], min = bytes[i+1], sec = bytes[i+2];
     const ms = (bytes[i+6] | (bytes[i+7]<<8) | (bytes[i+8]<<16) | ((bytes[i+9]<<24)>>>0)) >>> 0;
     const kind = bytes[i+12] | (bytes[i+13]<<8);
-    const textLen = bytes[i+14];
-    i += 15;
-    const content = decodeCP949(bytes, i, textLen);
-    i += textLen;
+    const content = decodeCP949(bytes, i + 15, bytes[i+14]);
+    i += recLen;
     const time = new Date(2000,0,1, hour, min, sec, ms % 1000);
     allLogs.push({time, kind, content, ms});
     if (++count % 5000 === 0) { updateProgress(i / totalLen * 100, `${count} items...`); await yieldThread(); }
@@ -962,79 +1091,85 @@ async function decodeType2(bytes) {
   if (i < totalLen) {
     const trailing = totalLen - i;
     skipped += trailing;
-    const markerTime = allLogs.length > 0 ? allLogs[allLogs.length-1].time : new Date(2000,0,1);
-    const markerMs = allLogs.length > 0 ? allLogs[allLogs.length-1].ms : 0;
-    allLogs.push({time:markerTime, kind:CORRUPTION_LOGKIND,
-      content:`>>> CORRUPTED DATA: ${trailing.toLocaleString()} bytes skipped at end of file (offset 0x${i.toString(16).toUpperCase()} ~ 0x${totalLen.toString(16).toUpperCase()}) <<<`,
-      ms:markerMs});
+    pushCorruptionMarker(new Date(2000,0,1),
+      `>>> CORRUPTED DATA: ${trailing.toLocaleString()} bytes skipped at end of file (offset 0x${hex(i)} ~ 0x${hex(totalLen)}) <<<`);
   }
   if (skipped > 0) console.warn(`Type2: skipped ${skipped} corrupted bytes`);
 }
 
 // --- TYPE3 DECODER: UTF-16 LE text ---
+// Format: [LogKind][dd/MM/yy-HH:mm:ss:LineIdx]content — 파싱 실패 줄은 건너뛴다 (C# DecodeType3)
 async function decodeType3(bytes) {
-  let start = 0;
-  if (bytes[0]===0xFF && bytes[1]===0xFE) start = 2;
-  const text = new TextDecoder('utf-16le').decode(bytes.slice(start));
-  const lines = text.split(/\r?\n/);
+  const lines = splitLines(decodeText(bytes, 'utf-16le'));
   let count = 0;
-  // Format: [LogKind][dd/MM/yy-HH:mm:ss:LineIdx]content
-  const re = /^\[(\d+)\]\[(\d{2})\/(\d{2})\/(\d{2})-(\d{2}):(\d{2}):(\d{2}):(\d+)\](.*)$/;
   for (const line of lines) {
     if (loadCancelled) return;
-    const m = re.exec(line);
-    if (m) {
-      const kind = parseInt(m[1]);
-      const day = parseInt(m[2]), mon = parseInt(m[3])-1, yr = 2000+parseInt(m[4]);
-      const h = parseInt(m[5]), mi = parseInt(m[6]), s = parseInt(m[7]), lineIdx = parseInt(m[8]);
-      const time = new Date(yr, mon, day, h, mi, s);
-      allLogs.push({time, kind, content: m[9], ms: lineIdx});
-    } else if (line.trim()) {
-      allLogs.push({time: new Date(2000,0,1), kind:0, content: line, ms: 0});
-    }
+    const item = parseType3Line(line);
+    if (item) allLogs.push(item);
     if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
   }
 }
 
+// C# ParseType3Line. 실패하면 null.
+function parseType3Line(line) {
+  const close1 = line.indexOf(']');
+  if (close1 < 1) return null; // 줄이 ']' 로 시작하면 실패
+  const kind = parseDotNetInt(line.substring(1, close1));
+  if (kind === null) return null;
+  const open2 = line.indexOf('[', close1 + 1);
+  if (open2 < 0) return null;
+  const close2 = line.indexOf(']', open2 + 1);
+  if (close2 < 0) return null;
+  const stamp = line.substring(open2 + 1, close2);
+  const lastColon = stamp.lastIndexOf(':');
+  if (lastColon < 0) return null;
+  const m = /^(\d{2})\/(\d{2})\/(\d{2})-(\d{2}):(\d{2}):(\d{2})$/.exec(stamp.substring(0, lastColon));
+  if (!m) return null;
+  const time = makeValidDate(2000 + +m[3], +m[2], +m[1], +m[4], +m[5], +m[6], 0);
+  if (!time) return null;
+  const idx = parseDotNetInt(stamp.substring(lastColon + 1)); // uint.TryParse
+  if (idx === null || idx < 0) return null;
+  return {time, kind: kind & 0xFF, content: trimWs(line.substring(close2 + 1)), ms: idx};
+}
+
 // --- TYPE4 DECODER: CP949 text ---
-// Format: [HH:mm:ss.fff][ignored][NN]content
-// Uses CP949 encoding (detectEncodingFromByteOrderMarks in C#)
+// Format: [HH:mm:ss.fff][ignored][NN]content — CP949, BOM 이 있으면 BOM 의 인코딩 (C# StreamReader 와 동일)
 async function decodeType4(bytes) {
-  let start = 0;
-  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) start = 3;
-  // Try euc-kr first (CP949 superset), fallback to utf-8
-  let text;
-  try {
-    text = new TextDecoder('euc-kr', {fatal:false}).decode(bytes.subarray(start));
-  } catch(e) {
-    text = new TextDecoder('utf-8', {fatal:false}).decode(bytes.subarray(start));
-  }
-  const lines = text.split(/\r?\n/);
+  const lines = splitLines(decodeText(bytes, 'euc-kr'));
   let count = 0;
-  // Full format: [HH:mm:ss.fff][...][NN]content
-  const reFull = /^\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\]\[[^\]]*\]\[(\d{1,3})\s*\](.*)$/;
-  // Simpler format: [HH:mm:ss.fff]content or [HH:mm:ss]content
-  const reSimple1 = /^\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\](.*)$/;
-  const reSimple2 = /^\[(\d{2}):(\d{2}):(\d{2})\](.*)$/;
   for (const line of lines) {
     if (loadCancelled) return;
-    let m = reFull.exec(line);
-    if (m) {
-      const h=parseInt(m[1]),mi=parseInt(m[2]),s=parseInt(m[3]),ms=parseInt(m[4]);
-      const kind = parseInt(m[5]);
-      const time = new Date(2000,0,1,h,mi,s,ms);
-      allLogs.push({time, kind, content:m[6].trim(), ms});
-    } else if ((m = reSimple1.exec(line))) {
-      const h=parseInt(m[1]),mi=parseInt(m[2]),s=parseInt(m[3]),ms=parseInt(m[4]);
-      const time = new Date(2000,0,1,h,mi,s,ms);
-      allLogs.push({time, kind:0, content:m[5], ms});
-    } else if ((m = reSimple2.exec(line))) {
-      const h=parseInt(m[1]),mi=parseInt(m[2]),s=parseInt(m[3]);
-      const time = new Date(2000,0,1,h,mi,s);
-      allLogs.push({time, kind:0, content:m[4], ms:0});
-    } else if (line.trim()) {
-      allLogs.push({time: new Date(2000,0,1), kind:0, content:line, ms:0});
-    }
+    const item = parseType4Line(line);
+    if (item) allLogs.push(item);
+    if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+  }
+}
+
+// C# ParseType4Line: 대괄호 그룹 3개 필요, kind = 세 번째 그룹 앞 2글자의 정수. 실패하면 null.
+function parseType4Line(line) {
+  const endTime = line.indexOf(']');
+  if (endTime < 1) return null; // 줄이 ']' 로 시작하면 실패
+  const t = /^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$/.exec(line.substring(1, endTime));
+  if (!t || +t[1] > 23 || +t[2] > 59 || +t[3] > 59) return null;
+  const s1 = line.indexOf('[', endTime + 1); if (s1 < 0) return null;
+  const e1 = line.indexOf(']', s1 + 1);      if (e1 < 0) return null;
+  const s2 = line.indexOf('[', e1 + 1);      if (s2 < 0) return null;
+  const e2 = line.indexOf(']', s2 + 1);      if (e2 < 0) return null;
+  const kind = parseDotNetInt(line.substring(s2 + 1, Math.min(e2, s2 + 3)));
+  if (kind === null) return null;
+  const time = new Date(2000,0,1, +t[1], +t[2], +t[3], +t[4]);
+  return {time, kind: kind & 0xFF, content: trimWs(line.substring(e2 + 1)), ms: 0};
+}
+
+// --- PLAIN TEXT: 시간/LogKind 없이 줄 단위 (탭 → 공백 4개) ---
+// 감지 단계에서 UTF-16 으로 판별된 파일은 UTF-16, 그 외 CP949 (BOM 이 있으면 BOM 의 인코딩)
+async function decodePlainText(bytes) {
+  const lines = splitLines(decodeText(bytes, isUnicodeText(bytes) ? 'utf-16le' : 'euc-kr'));
+  const time = new Date(2000,0,1);
+  let count = 0;
+  for (const line of lines) {
+    if (loadCancelled) return;
+    allLogs.push({time, kind:0, content: line.replace(/\t/g, '    '), ms:0});
     if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
   }
 }
@@ -1056,15 +1191,16 @@ async function decodeType5(bytes, logType, fileName) {
   i += nameLen; // skip program name
   i += 8; // skip creationTicks (int64)
 
-  // Extract date from filename if possible (format: ProgramName_YYYYMMDD.blog)
-  let fileDate = new Date();
+  // 파일명에서 날짜 추출: {ProgramName}_{YYYYMMDD}.blog — 없거나 잘못되면 오늘 0시 (C# DateTime.Today)
+  const now = new Date();
+  let fileDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (fileName) {
-    const base = fileName.replace(/\.[^.]+$/, '');
+    const base = fileName.split('/').pop().replace(/\.[^.]*$/, '');
     const uIdx = base.lastIndexOf('_');
-    if (uIdx >= 0 && base.length >= uIdx + 9) {
-      const ds = base.substring(uIdx+1, uIdx+9);
-      const yr=parseInt(ds.substring(0,4)), mo=parseInt(ds.substring(4,6))-1, dy=parseInt(ds.substring(6,8));
-      if (!isNaN(yr)) fileDate = new Date(yr, mo, dy);
+    const ds = uIdx >= 0 ? base.substring(uIdx+1, uIdx+9) : '';
+    if (/^\d{8}$/.test(ds)) {
+      const d = makeValidDate(+ds.substring(0,4), +ds.substring(4,6), +ds.substring(6,8), 0, 0, 0, 0);
+      if (d) fileDate = d;
     }
   }
 
@@ -1082,21 +1218,16 @@ async function decodeType5(bytes, logType, fileName) {
       dict.clear();
       continue;
     }
-    // Resync on invalid type byte: scan forward for 0xFF (session marker)
-    if (typeByte > 6) {
+    // 유효 LogType 범위(0-50) 밖: 나머지 전체를 손상 1건으로 처리하고 종료
+    // (아래 "파일 끝 손상" 처리와 중복 집계되지 않도록 바로 반환 — C# 와 동일)
+    if (typeByte > 50) {
       const corruptStart = i - 1;
-      let resync = i;
-      while (resync < totalLen && bytes[resync] !== 0xFF) resync++;
-      const skippedBytes = resync - corruptStart;
-      skipped += skippedBytes;
-      const markerTime = allLogs.length > 0 ? allLogs[allLogs.length-1].time : fileDate;
-      const markerMs = allLogs.length > 0 ? allLogs[allLogs.length-1].ms : 0;
-      allLogs.push({time:markerTime, kind:CORRUPTION_LOGKIND,
-        content:`>>> CORRUPTED DATA: ${skippedBytes.toLocaleString()} bytes skipped (offset 0x${corruptStart.toString(16).toUpperCase()} ~ 0x${resync.toString(16).toUpperCase()}) <<<`,
-        ms:markerMs});
-      i = resync;
-      dict.clear();
-      continue;
+      const trailing = totalLen - corruptStart;
+      skipped += trailing;
+      pushCorruptionMarker(fileDate,
+        `>>> CORRUPTED DATA: ${trailing.toLocaleString()} bytes skipped (offset 0x${hex(corruptStart)} ~ 0x${hex(totalLen)}) <<<`);
+      console.warn(`Type5: skipped ${skipped} corrupted bytes`);
+      return;
     }
     if (i + 6 > totalLen) break;
     const timeMs = (bytes[i]|(bytes[i+1]<<8)|(bytes[i+2]<<16)|((bytes[i+3]<<24)>>>0))>>>0;
@@ -1105,177 +1236,147 @@ async function decodeType5(bytes, logType, fileName) {
     if (i + msgLen > totalLen) break;
     const compressed = td.decode(bytes.subarray(i, i + msgLen));
     i += msgLen;
-    const message = decompressType5(compressed, dict);
+    const message = decompressType5(compressed, dict, version);
     const logTime = new Date(fileDate.getTime() + timeMs);
     allLogs.push({time:logTime, kind:typeByte, content:message, ms:timeMs});
     if (++count % 5000 === 0) { updateProgress(i/totalLen*100, `${count} items...`); await yieldThread(); }
   }
-  // Trailing corruption
+  // Trailing corruption: remaining bytes that couldn't be parsed
   if (i < totalLen) {
     const trailing = totalLen - i;
     skipped += trailing;
-    const markerTime = allLogs.length > 0 ? allLogs[allLogs.length-1].time : fileDate;
-    const markerMs = allLogs.length > 0 ? allLogs[allLogs.length-1].ms : 0;
-    allLogs.push({time:markerTime, kind:CORRUPTION_LOGKIND,
-      content:`>>> CORRUPTED DATA: ${trailing.toLocaleString()} bytes skipped at end of file (offset 0x${i.toString(16).toUpperCase()} ~ 0x${totalLen.toString(16).toUpperCase()}) <<<`,
-      ms:markerMs});
+    pushCorruptionMarker(fileDate,
+      `>>> CORRUPTED DATA: ${trailing.toLocaleString()} bytes skipped at end of file (offset 0x${hex(i)} ~ 0x${hex(totalLen)}) <<<`);
   }
   if (skipped > 0) console.warn(`Type5: skipped ${skipped} corrupted bytes`);
 }
 
-function decompressType5(compressed, dict) {
+// C# DecompressType5Message 포팅.
+// version >= 2: '@@' → '@', '##' → '#' (v2 escape). '@N' 은 뒤따르는 숫자열이 int 로 파싱될 때만 사전 참조이고
+// 그 밖의 '@' 는 문자 그대로. '#N:word' 의 word 는 유니코드 문자/숫자/밑줄 (char.IsLetterOrDigit || '_').
+const T5_DIGIT_RE = /^\p{Nd}$/u;
+const T5_WORD_RE = /^[\p{L}\p{Nd}_]$/u;
+function decompressType5(compressed, dict, version) {
   let result = '';
   let i = 0;
+  const escapeAware = version >= 2;
   while (i < compressed.length) {
-    if (compressed[i] === '@') {
-      // Dictionary reference: @N
-      let j = i+1;
-      while (j < compressed.length && compressed[j]>='0' && compressed[j]<='9') j++;
-      if (j > i+1) {
-        const idx = parseInt(compressed.substring(i+1, j));
+    const c = compressed[i];
+    if (c === '@') {
+      if (escapeAware && compressed[i+1] === '@') { result += '@'; i += 2; continue; }
+      // 사전 참조: @N
+      let numEnd = i + 1;
+      while (numEnd < compressed.length && T5_DIGIT_RE.test(compressed[numEnd])) numEnd++;
+      const idx = numEnd > i + 1 ? parseDotNetInt(compressed.substring(i + 1, numEnd)) : null;
+      if (idx !== null) {
         if (dict.has(idx)) result += dict.get(idx);
+        i = numEnd;
+      } else {
+        result += '@'; i++; // 숫자가 뒤따르지 않는 '@' 는 리터럴로 보존
       }
-      i = j;
-    } else if (compressed[i] === '#') {
-      // Dictionary definition: #N:word
+    } else if (c === '#') {
+      if (escapeAware && compressed[i+1] === '#') { result += '#'; i += 2; continue; }
+      // 사전 정의: #N:word
       const colonIdx = compressed.indexOf(':', i);
-      if (colonIdx > i+1) {
-        const idx = parseInt(compressed.substring(i+1, colonIdx));
-        if (!isNaN(idx)) {
+      if (colonIdx > i + 1) {
+        const idx = parseDotNetInt(compressed.substring(i + 1, colonIdx));
+        if (idx !== null) {
           let wordEnd = colonIdx + 1;
-          while (wordEnd < compressed.length) {
-            const c = compressed[wordEnd];
-            if (c === ' ' || c === '@' || c === '#') break;
-            wordEnd++;
-          }
-          const word = compressed.substring(colonIdx+1, wordEnd);
+          while (wordEnd < compressed.length && T5_WORD_RE.test(compressed[wordEnd])) wordEnd++;
+          const word = compressed.substring(colonIdx + 1, wordEnd);
           dict.set(idx, word);
           result += word;
           i = wordEnd;
           continue;
         }
       }
-      result += compressed[i]; i++;
+      result += c; i++;
     } else {
-      result += compressed[i]; i++;
+      result += c; i++;
     }
   }
   return result;
 }
 
 // --- TYPE6 DECODER: Tab-separated text with SECS message support ---
-// Format: YYYY-MM-DD\tHH:mm:ss:fff\tcontent  (colon or dot for ms)
-// Continuation lines start with tab/space (reuse previous time & kind)
-// SECS message names (S#F#) extracted for dynamic LogKind mapping
+// Format: YYYY-MM-DD\tHH:mm:ss:fff\tcontent  (colon or dot for ms), UTF-8 (BOM 이 있으면 BOM 의 인코딩)
+// 탭/공백으로 시작하는 줄과 파싱 실패 줄은 직전 항목의 시간/LogKind 를 쓰는 연속 항목 (직전 항목이 없으면 버림)
+// SECS message names (S#F#) → 동적 LogKind (type6KindMap — setupLogKinds 가 사용)
+const TYPE6_PALETTE = ['#0064b4','#009650','#b45000','#960096','#009696','#b40050',
+  '#646400','#005078','#783c00','#500078','#007850','#963232']; // C# LogKindColorPalette
+let type6KindMap = new Map(); // kindId -> [name, color]
+// .NET \b(S\d+F\d+)\b — 대소문자 구분, \d 는 유니코드 숫자, 단어 문자는 [\p{L}\p{Mn}\p{Nd}\p{Pc}].
+// (구형 iOS Safari 호환을 위해 lookbehind 대신 앞 경계 문자를 비캡처 그룹으로 소비 — 이름은 그룹 1)
+const SECS_NAME_RE = /(?:^|[^\p{L}\p{Mn}\p{Nd}\p{Pc}])(S\p{Nd}+F\p{Nd}+)(?![\p{L}\p{Mn}\p{Nd}\p{Pc}])/u;
+
 async function decodeType6(bytes) {
-  let start = 0;
-  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF) start = 3;
-  const text = new TextDecoder('utf-8', {fatal:false}).decode(bytes.subarray(start));
-  const lines = text.split(/\r?\n/);
+  const lines = splitLines(decodeText(bytes, 'utf-8'));
   let count = 0;
 
-  let lastTime = null, lastMs = 0, lastKind = 0;
-  const secsRe = /\b(S\d+F\d+)\b/i;
-  const type6KindMap = new Map(); // secsName -> kindId
-  let nextKindId = 0;
-  // Predefined palette for dynamic kinds
-  const palette = ['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4','#f032e6',
-    '#bfef45','#fabed4','#469990','#dcbeff','#9A6324','#800000','#aaffc3','#808000','#000075'];
-
-  function getOrCreateKind(secsName) {
-    if (!secsName) return 0;
-    const upper = secsName.toUpperCase();
-    if (type6KindMap.has(upper)) return type6KindMap.get(upper);
-    const id = nextKindId++;
-    type6KindMap.set(upper, id);
-    // Register in logKinds for UI display
-    logKinds.set(id, { name: upper, color: palette[id % palette.length], enabled: true, count: 0 });
-    return id;
+  type6KindMap = new Map();
+  const nameToKind = new Map(); // 대문자 이름 -> kindId (C# OrdinalIgnoreCase 사전)
+  function registerKind(name) {
+    const key = name.toUpperCase();
+    let kind = nameToKind.get(key);
+    if (kind === undefined) {
+      kind = nameToKind.size; // 등록 순서대로 0, 1, 2, ... (256 에서 되돌지 않음)
+      nameToKind.set(key, kind);
+      type6KindMap.set(kind, [name, TYPE6_PALETTE[kind % TYPE6_PALETTE.length]]);
+    }
+    return kind;
   }
-  // Register default "System" kind
-  getOrCreateKind('System');
+  registerKind('System'); // 기본 LogKind 0: 메시지 이름이 없는 줄
 
+  let lastTime = null, lastMs = 0, lastKind = 0;
   for (const line of lines) {
     if (loadCancelled) return;
-    if (!line || !line.trim()) { count++; continue; }
-
-    // Continuation line (starts with tab or space)
-    if (line[0] === '\t' || line[0] === ' ') {
-      if (lastTime) {
-        const content = line.replace(/\t/g, ' ');
-        allLogs.push({time: lastTime, kind: lastKind, content, ms: lastMs});
-      }
-      if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
-      continue;
-    }
-
-    // Try to parse: YYYY-MM-DD\t...
-    const firstTab = line.indexOf('\t');
-    if (firstTab < 10) {
-      // Parse failed, use previous time
-      if (lastTime) {
-        allLogs.push({time: lastTime, kind: lastKind, content: line.replace(/\t/g,' '), ms: lastMs});
-      }
-      if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
-      continue;
-    }
-
-    const datePart = line.substring(0, firstTab);
-    const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
-    if (!dm) {
-      if (lastTime) allLogs.push({time: lastTime, kind: lastKind, content: line.replace(/\t/g,' '), ms: lastMs});
-      if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
-      continue;
-    }
-    const yr=parseInt(dm[1]), mon=parseInt(dm[2])-1, day=parseInt(dm[3]);
-
-    const afterDate = line.substring(firstTab + 1);
-    const secondTab = afterDate.indexOf('\t');
-
-    let h=0, mi=0, s=0, ms=0, content;
-
-    if (secondTab < 0) {
-      // Only one tab: date\tcontent
-      content = afterDate.replace(/\t/g, ' ');
-      lastTime = new Date(yr, mon, day);
-      lastMs = 0;
-    } else {
-      const timePart = afterDate.substring(0, secondTab);
-      content = afterDate.substring(secondTab + 1).replace(/\t/g, ' ');
-
-      // Parse time: HH:mm:ss:fff or HH:mm:ss.fff or HH:mm:ss
-      const tParts = timePart.split(':');
-      if (tParts.length >= 3) {
-        h = parseInt(tParts[0])||0;
-        mi = parseInt(tParts[1])||0;
-        if (tParts.length === 4) {
-          // HH:mm:ss:fff
-          s = parseInt(tParts[2])||0;
-          ms = parseInt(tParts[3])||0;
-        } else {
-          // HH:mm:ss.fff or HH:mm:ss
-          const dotIdx = tParts[2].indexOf('.');
-          if (dotIdx >= 0) {
-            s = parseInt(tParts[2].substring(0, dotIdx))||0;
-            ms = parseInt(tParts[2].substring(dotIdx+1))||0;
-          } else {
-            s = parseInt(tParts[2])||0;
-          }
-        }
-      }
-      if (h>23||mi>59||s>59||ms>999) { count++; continue; }
-      lastTime = new Date(yr, mon, day, h, mi, s, ms);
-      lastMs = ms;
-    }
-
-    // Extract SECS message name
-    const secsMatch = secsRe.exec(content);
-    const secsName = secsMatch ? secsMatch[1] : null;
-    lastKind = getOrCreateKind(secsName || 'System');
-
-    allLogs.push({time: lastTime, kind: lastKind, content, ms: lastMs});
     if (++count % 5000 === 0) { updateProgress(count/lines.length*100, `${count} lines...`); await yieldThread(); }
+    if (!trimWs(line)) continue;
+
+    if (line[0] !== '\t' && line[0] !== ' ') {
+      const p = parseType6Line(line);
+      if (p) {
+        const secs = SECS_NAME_RE.exec(p.content);
+        lastTime = p.time;
+        lastMs = p.ms;
+        lastKind = secs ? registerKind(secs[1].toUpperCase()) : 0;
+        allLogs.push({time: p.time, kind: lastKind, content: p.content, ms: p.ms});
+        continue;
+      }
+    }
+    // 연속 줄(탭/공백 시작) 또는 파싱 실패 줄
+    if (lastTime) allLogs.push({time: lastTime, kind: lastKind, content: line.replace(/\t/g, ' '), ms: lastMs});
   }
+}
+
+// C# TryParseType6Line: YYYY-MM-DD\tHH:mm:ss:fff\t내용 (또는 HH:mm:ss.fff / HH:mm:ss), 탭이 하나면 YYYY-MM-DD\t내용.
+// 실패하면 null. 시/분/초/밀리초 각 부분은 int.TryParse — 숫자가 아니면 0 으로 본다 (C# 와 동일).
+function parseType6Line(line) {
+  const firstTab = line.indexOf('\t');
+  if (firstTab < 10) return null; // YYYY-MM-DD 는 최소 10자
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(line.substring(0, firstTab));
+  if (!dm) return null;
+  const afterDate = line.substring(firstTab + 1);
+  const secondTab = afterDate.indexOf('\t');
+  if (secondTab < 0) {
+    const time = makeValidDate(+dm[1], +dm[2], +dm[3], 0, 0, 0, 0);
+    return time ? {time, content: afterDate, ms: 0} : null;
+  }
+  const parts = afterDate.substring(0, secondTab).split(':');
+  if (parts.length < 3) return null;
+  const num = s => { const v = parseDotNetInt(s); return v === null ? 0 : v; };
+  const h = num(parts[0]), mi = num(parts[1]);
+  let s, ms = 0;
+  if (parts.length === 4) {
+    s = num(parts[2]); ms = num(parts[3]); // HH:mm:ss:fff
+  } else {
+    const dot = parts[2].indexOf('.');     // HH:mm:ss.fff 또는 HH:mm:ss
+    if (dot >= 0) { s = num(parts[2].substring(0, dot)); ms = num(parts[2].substring(dot + 1)); }
+    else s = num(parts[2]);
+  }
+  if (h < 0 || h > 23 || mi < 0 || mi > 59 || s < 0 || s > 59 || ms < 0 || ms > 999) return null;
+  const time = makeValidDate(+dm[1], +dm[2], +dm[3], h, mi, s, ms);
+  return time ? {time, content: afterDate.substring(secondTab + 1).replace(/\t/g, ' '), ms} : null;
 }
 
 function yieldThread() { return new Promise(r => setTimeout(r, 0)); }
@@ -1285,7 +1386,8 @@ function yieldThread() { return new Promise(r => setTimeout(r, 0)); }
 // ============================================================
 function setupLogKinds(logType) {
   logKinds.clear();
-  const map = LOG_KIND_MAPS[logType] || {};
+  // Type6 은 디코더가 SECS 메시지 이름으로 만든 동적 매핑, 나머지는 타입별 고정 매핑
+  const entries = logType === 'Type6' ? [...type6KindMap] : Object.entries(LOG_KIND_MAPS[logType] || {});
 
   // Count kinds in data
   const kindCounts = new Map();
@@ -1294,7 +1396,7 @@ function setupLogKinds(logType) {
   }
 
   // Add predefined kinds
-  for (const [id, [name, color]] of Object.entries(map)) {
+  for (const [id, [name, color]] of entries) {
     const k = parseInt(id);
     logKinds.set(k, { name, color, enabled: true, count: kindCounts.get(k)||0 });
   }
@@ -1319,7 +1421,7 @@ function renderKindList() {
     const li = document.createElement('li');
     li.innerHTML = `<label><input type="checkbox" ${info.enabled?'checked':''} data-kind="${id}" class="kind-check">
       <span class="kind-color" style="background:${info.color}"></span>
-      <span class="kind-name">${info.name}</span></label>
+      <span class="kind-name">${escapeHtml(info.name)}</span></label>
       <span class="kind-count">${info.count}</span>`;
     ul.appendChild(li);
   }
@@ -1339,288 +1441,305 @@ document.getElementById('kindInv').onclick = () => { logKinds.forEach(v => v.ena
 // ============================================================
 // FILTER EXPRESSION ENGINE
 // ============================================================
+// LogFilterExpression.cs 포팅 — 토큰화/파싱/평가 규칙을 그대로 따른다.
+// tests/html/filter-parity.test.js 가 이 섹션(다음 섹션 머리 전까지)만 잘라 tests/filter-cases.tsv 로 검증하므로
+// 이 섹션은 DOM/전역 상태에 의존하지 않아야 한다.
 const TokenType = { Literal:0, And:1, Or:2, Not:3, LBrace:4, RBrace:5, First:6, After:7, Last:8, Before:9 };
+const KEYWORDS = [['AND',TokenType.And],['OR',TokenType.Or],['NOT',TokenType.Not],['FIRST',TokenType.First],
+  ['AFTER',TokenType.After],['LAST',TokenType.Last],['BEFORE',TokenType.Before]];
+
+// .NET char.IsWhiteSpace 와 같은 문자 집합 (JS \s 는 U+FEFF 를 포함하고 U+0085 를 빠뜨린다)
+const WS_CHARS = '\\t\\n\\v\\f\\r \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const WS_RE = new RegExp('[' + WS_CHARS + ']');
+const TRIM_RE = new RegExp('^[' + WS_CHARS + ']+|[' + WS_CHARS + ']+$', 'g');
+function isWs(c) { return WS_RE.test(c); }
+function trimWs(s) { return s.replace(TRIM_RE, ''); }
+
+// 직선 따옴표 + 스마트 따옴표(“ ”)
+function isQuote(c) { return c === '"' || c === '\u201c' || c === '\u201d'; }
+// 키워드 앞뒤에 올 수 있는 경계 문자
+function isKeywordBoundary(c) {
+  return isWs(c) || c === '|' || c === '&' || c === '!' || c === '~' || c === '{' || c === '}' || isQuote(c);
+}
+// input[i..] 가 키워드로 시작하는지 (ASCII 대소문자 무시)
+function startsWithKeyword(input, i, kw) {
+  if (i + kw.length > input.length) return false;
+  for (let k = 0; k < kw.length; k++) {
+    let c = input.charCodeAt(i + k);
+    if (c >= 97 && c <= 122) c -= 32;
+    if (c !== kw.charCodeAt(k)) return false;
+  }
+  return true;
+}
+// 키워드 뒤가 입력 끝이거나 경계 문자일 때만 연산자 (C# TryMatchOperatorKeyword)
+function matchKeyword(input, i, kw) {
+  return startsWithKeyword(input, i, kw) && (i + kw.length === input.length || isKeywordBoundary(input[i + kw.length]));
+}
 
 function tokenize(input) {
   const tokens = [];
-  if (!input || !input.trim()) return tokens;
+  if (!input || !trimWs(input)) return tokens;
   let i = 0;
   while (i < input.length) {
-    // Skip whitespace before operators
-    while (i < input.length && /\s/.test(input[i])) {
+    // 연산자 앞의 공백만 건너뛴다. 그 밖의 공백은 리터럴의 일부 — 공백은 토큰 구분자가 아니다 ("Mark Str" 는 토큰 하나)
+    if (isWs(input[i])) {
       let p = i;
-      while (p < input.length && /\s/.test(input[p])) p++;
-      if (p < input.length) {
-        const rem = input.substring(p);
-        if (/^(AND |OR |NOT |FIRST |LAST |AFTER |BEFORE |\|\|?|&&?|[!~{}])/i.test(rem)) { i = p; break; }
-      }
-      break;
+      while (p < input.length && isWs(input[p])) p++;
+      if (p < input.length && ('|&!~{}'.includes(input[p]) || KEYWORDS.some(([kw]) => startsWithKeyword(input, p, kw) && input[p + kw.length] === ' '))) i = p;
     }
     if (i >= input.length) break;
     const c = input[i];
-    if (c==='|') { tokens.push({type:TokenType.Or, val: input[i+1]==='|'?'||':'|'}); i += input[i+1]==='|'?2:1; continue; }
-    if (c==='&') { tokens.push({type:TokenType.And, val: input[i+1]==='&'?'&&':'&'}); i += input[i+1]==='&'?2:1; continue; }
-    if (c==='!'||c==='~') { tokens.push({type:TokenType.Not, val:c}); i++; continue; }
-    if (c==='{') { tokens.push({type:TokenType.LBrace}); i++; continue; }
-    if (c==='}') { tokens.push({type:TokenType.RBrace}); i++; continue; }
-    // Quoted literal
-    if (c==='"'||c==='\u201c'||c==='\u201d') {
-      let j = i+1;
-      while (j < input.length && input[j]!=='"' && input[j]!=='\u201c' && input[j]!=='\u201d') j++;
-      tokens.push({type:TokenType.Literal, val: input.substring(i+1, j), quoted:true});
-      i = j < input.length ? j+1 : input.length;
+    if (c === '|') { const two = input[i+1] === '|'; tokens.push({type:TokenType.Or, val: two ? '||' : '|'}); i += two ? 2 : 1; continue; }
+    if (c === '&') { const two = input[i+1] === '&'; tokens.push({type:TokenType.And, val: two ? '&&' : '&'}); i += two ? 2 : 1; continue; }
+    if (c === '!' || c === '~') { tokens.push({type:TokenType.Not, val:c}); i++; continue; }
+    if (c === '{') { tokens.push({type:TokenType.LBrace, val:'{'}); i++; continue; }
+    if (c === '}') { tokens.push({type:TokenType.RBrace, val:'}'}); i++; continue; }
+    // 따옴표 리터럴 — 와일드카드(* ? #)도 문자 그대로. 닫는 따옴표가 없으면 끝까지
+    if (isQuote(c)) {
+      let j = i + 1;
+      while (j < input.length && !isQuote(input[j])) j++;
+      tokens.push({type:TokenType.Literal, val: input.substring(i + 1, j), quoted:true});
+      i = j < input.length ? j + 1 : input.length;
       continue;
     }
-    // Operator keywords
-    const rem = input.substring(i);
-    let found = false;
-    for (const [kw, tt] of [['AND',TokenType.And],['OR',TokenType.Or],['NOT',TokenType.Not],
-        ['FIRST',TokenType.First],['AFTER',TokenType.After],['LAST',TokenType.Last],['BEFORE',TokenType.Before]]) {
-      if (rem.length >= kw.length && rem.substring(0, kw.length).toUpperCase() === kw) {
-        const next = rem.length === kw.length ? '' : rem[kw.length];
-        if (!next || /[\s|&!~{}""\u201c\u201d]/.test(next)) {
-          tokens.push({type:tt, val:kw}); i += kw.length; found = true; break;
-        }
-      }
-    }
-    if (found) continue;
-    // Literal: read until operator
-    let start = i;
+    // 연산자 키워드 (이 위치 앞은 항상 입력 시작/경계 문자다)
+    const kw = KEYWORDS.find(([k]) => matchKeyword(input, i, k));
+    if (kw) { tokens.push({type:kw[1], val:kw[0]}); i += kw[0].length; continue; }
+    // 리터럴: 기호 연산자/괄호/따옴표, 또는 앞이 경계 문자인 독립 키워드 직전까지.
+    // 단어 끝부분은 리터럴로 남는다 — "error" 의 "or", "CANNOT" 의 "not" 등
+    const start = i;
     while (i < input.length) {
       const ch = input[i];
-      if ('|&!~{}""\u201c\u201d'.includes(ch)) break;
-      const ah = input.substring(i);
-      let isOp = false;
-      for (const kw of ['AND','OR','NOT','FIRST','AFTER','LAST','BEFORE']) {
-        if (ah.length >= kw.length && ah.substring(0,kw.length).toUpperCase()===kw) {
-          const nx = ah.length===kw.length?'':ah[kw.length];
-          if (!nx || /[\s|&!~{}""\u201c\u201d]/.test(nx)) { isOp=true; break; }
-        }
-      }
-      if (isOp) break;
+      if (!isWs(ch) && isKeywordBoundary(ch)) break;
+      if (i > start && isKeywordBoundary(input[i - 1]) && KEYWORDS.some(([k]) => matchKeyword(input, i, k))) break;
       i++;
     }
-    const lit = input.substring(start, i).trim();
+    const lit = trimWs(input.substring(start, i));
     if (lit) tokens.push({type:TokenType.Literal, val:lit, quoted:false});
   }
   return tokens;
 }
 
-// AST Parser
+// AST 파서 (C# Parser). 잘못된 식은 Error 를 던진다 — 빈 피연산자로 메워 "전체 매칭"이 되지 않게.
 function parseExpression(tokens) {
   let pos = 0;
+  const match = type => { if (pos < tokens.length && tokens[pos].type === type) { pos++; return true; } return false; };
+  const unexpected = () => new Error("Unexpected token '" + tokens[pos].val + "'");
   function parseOr() {
     let left = parseAnd();
-    while (pos < tokens.length && tokens[pos].type === TokenType.Or) { pos++; const right = parseAnd(); left = {type:'or', left, right}; }
+    while (match(TokenType.Or)) left = {type:'or', left, right: parseAnd()};
     return left;
   }
   function parseAnd() {
-    let left = parseUnary();
-    while (pos < tokens.length && tokens[pos].type === TokenType.And) { pos++; const right = parseUnary(); left = {type:'and', left, right}; }
-    // Implicit AND: 연산자 없이 인접한 atom({...}, "...", NOT, FIRST/LAST 등)을 AND 로 결합 (C# ParseAnd 와 동일)
-    // 제외 토큰(Or/RBrace/And/After/Before) 외에는 parseUnary 가 항상 pos 를 전진시키므로 무한루프 없음
-    while (pos < tokens.length &&
-           tokens[pos].type !== TokenType.Or &&
-           tokens[pos].type !== TokenType.RBrace &&
-           tokens[pos].type !== TokenType.And &&
-           tokens[pos].type !== TokenType.After &&
-           tokens[pos].type !== TokenType.Before) {
-      const right = parseUnary();
-      left = {type:'and', left, right};
+    let left = parseAtom();
+    // 명시적 AND 와 암시적 AND(연산자 없이 이어진 피연산자)를 한 루프에서 처리 — 섞어 써도 된다
+    while (pos < tokens.length) {
+      const t = tokens[pos].type;
+      if (t === TokenType.Or || t === TokenType.RBrace || t === TokenType.After || t === TokenType.Before) break;
+      match(TokenType.And);
+      left = {type:'and', left, right: parseAtom()};
     }
     return left;
   }
-  function parseUnary() {
-    if (pos < tokens.length && tokens[pos].type === TokenType.Not) { pos++; return {type:'not', child: parseUnary()}; }
-    if (pos < tokens.length && tokens[pos].type === TokenType.First) { return parseFirstAfter(); }
-    if (pos < tokens.length && tokens[pos].type === TokenType.Last) { return parseLastBefore(); }
-    return parsePrimary();
-  }
-  function parseFirstAfter() {
-    pos++; // skip FIRST
-    const target = parseUnary();
-    if (pos < tokens.length && tokens[pos].type === TokenType.After) { pos++; }
-    const condition = parseUnary();
-    return {type:'firstAfter', target, condition};
-  }
-  function parseLastBefore() {
-    pos++; // skip LAST
-    const target = parseUnary();
-    if (pos < tokens.length && tokens[pos].type === TokenType.Before) { pos++; }
-    const condition = parseUnary();
-    return {type:'lastBefore', target, condition};
-  }
-  function parsePrimary() {
-    if (pos < tokens.length && tokens[pos].type === TokenType.LBrace) {
-      pos++;
+  function parseAtom() {
+    if (match(TokenType.First)) {
+      const target = parseAtom();
+      if (!match(TokenType.After)) throw new Error('Expected AFTER keyword in FIRST...AFTER expression');
+      return {type:'firstAfter', target, condition: parseAtom()};
+    }
+    if (match(TokenType.Last)) {
+      const target = parseAtom();
+      if (!match(TokenType.Before)) throw new Error('Expected BEFORE keyword in LAST...BEFORE expression');
+      return {type:'lastBefore', target, condition: parseAtom()};
+    }
+    if (match(TokenType.Not)) return {type:'not', child: parseAtom()};
+    if (match(TokenType.LBrace)) {
       const node = parseOr();
-      if (pos < tokens.length && tokens[pos].type === TokenType.RBrace) pos++;
+      if (!match(TokenType.RBrace)) throw new Error("Missing closing '}'");
       return node;
     }
     if (pos < tokens.length && tokens[pos].type === TokenType.Literal) {
-      const t = tokens[pos]; pos++;
-      return {type:'literal', val:t.val, quoted:!!t.quoted};
+      const t = tokens[pos++];
+      return makeLiteralNode(t.val, t.quoted);
     }
-    // 인식할 수 없는 토큰은 건너뛰어 무한 루프 방지 (C# ParseAtom fallback 과 동일)
-    if (pos < tokens.length) pos++;
-    return {type:'literal', val:'', quoted:false};
+    // 피연산자 자리에 연산자/닫는 괄호가 오거나 식이 끝남 (예: "foo OR", "NOT", "{}", "AND foo")
+    if (pos < tokens.length) throw unexpected();
+    throw new Error('Missing operand at end of expression');
   }
   if (tokens.length === 0) return null;
-  const result = parseOr();
-  // 파싱 후 소비되지 않은 토큰이 남으면 잘못된 표현식 — 조용히 버리지 않고 무효 처리
-  // (예: 짝 없는 '}', FIRST 없는 AFTER 등). null → 해당 슬롯은 결합에서 제외 (C# IsValid=false 와 동일).
-  if (pos < tokens.length) {
-    console.warn("Filter parse error: unexpected token '" + tokens[pos].val + "'");
-    return null;
+  const root = parseOr();
+  // 소비되지 않은 토큰이 남으면 잘못된 식 (예: 짝 없는 '}', FIRST 없는 AFTER)
+  if (pos < tokens.length) throw unexpected();
+  return root;
+}
+
+// 리터럴 노드: 매칭/하이라이트 정규식을 미리 만든다. 와일드카드가 아니면 대소문자 무시 부분 문자열.
+function makeLiteralNode(val, quoted) {
+  const isWild = !quoted && /[*?#]/.test(val);
+  const src = isWild ? wildcardCore(val) : escapeRegex(val);
+  // # 로 시작하는 패턴(앞 * 제외)은 숫자열의 "시작"에서만 매칭을 시도해 긴 숫자열의 O(n²) 를 피한다 (C# CreateRegex).
+  // 일치 판정(re)에만 앵커를 쓰고 하이라이트(reAll)는 앵커 없이 — JS 에는 .NET 의 \G 가 없어서 앵커를 쓰면
+  // 직전 매칭이 # 문자집합 글자로 끝날 때 이어지는 매칭을 놓친다. 하이라이트는 보이는 줄에만 돈다.
+  const anchor = isWild && LOOKBEHIND_OK && val.replace(/^\*+/, '')[0] === '#' ? '(?<!' + NUM_CLASS + ')' : '';
+  return {type:'literal', val, quoted: !!quoted, re: new RegExp(anchor + src, 'i'), reAll: new RegExp(src, 'gi')};
+}
+
+// 와일드카드 → 정규식 핵심부 (C# CreateRegex): 앞뒤 * 는 부분 일치에서 의미가 없어 떼어 낸다.
+// * → 0개 이상(비탐욕), ? → 정확히 1자, # → 숫자/+/./-/공백 1개 이상. .NET 의 '.' 는 \n 만 제외하므로 [^\n].
+const NUM_CLASS = '[0-9+.\\-' + WS_CHARS + ']';
+// lookbehind 지원 여부 — Safari 16.4 미만은 미지원이라 정규식 생성이 SyntaxError 가 된다
+const LOOKBEHIND_OK = (() => { try { new RegExp('(?<!a)b'); return true; } catch (e) { return false; } })();
+function wildcardCore(pattern) {
+  const p = pattern.replace(/^\*+/, '').replace(/\*+$/, '');
+  let src = '';
+  for (let k = 0; k < p.length; k++) {
+    const ch = p[k];
+    src += ch === '*' ? '[^\\n]*?' : ch === '?' ? '[^\\n]' : ch === '#' ? NUM_CLASS + '+' : escapeRegex(ch);
   }
-  return result;
+  return src;
 }
 
-// Build regex from wildcard pattern
-function wildcardToRegex(pattern, isQuoted) {
-  let inner = pattern;
-  let hasPrefix = inner.startsWith('*'), hasSuffix = inner.endsWith('*');
-  inner = inner.replace(/^\*+/, '').replace(/\*+$/, '');
-  let temp = inner.replace(/\*/g, '\x00').replace(/\?/g, '\x01');
-  if (!isQuoted) temp = temp.replace(/#/g, '\x02');
-  let escaped = temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  escaped = escaped.replace(/\x00/g, '.*?').replace(/\x01/g, '.');
-  if (!isQuoted) escaped = escaped.replace(/\x02/g, '[0-9+.\\-\\s]+');
-  const hasWild = !isQuoted && (/[*?#]/.test(pattern));
-  const core = '(' + escaped + ')';
-  let final = hasWild && (hasPrefix||hasSuffix) ? core : '.*?' + core + '.*?';
-  return new RegExp(final, 'i');
-}
-
-// Evaluate AST node against items, returns Set of matching indices
+// AST 평가 → 행별 일치 배열 (Uint8Array, 1 = 일치). C# Node.Evaluate(BitArray) 와 같은 의미.
 function evaluateNode(node, items) {
-  if (!node) return new Set(items.map((_,i)=>i));
-  switch(node.type) {
+  const n = items.length;
+  switch (node.type) {
     case 'literal': {
-      if (!node.val) return new Set(items.map((_,i)=>i));
-      const hasWild = !node.quoted && /[*?#]/.test(node.val);
-      if (hasWild) {
-        const re = wildcardToRegex(node.val, node.quoted);
-        const s = new Set();
-        for (let i=0;i<items.length;i++) if(re.test(items[i].content)) s.add(i);
-        return s;
-      } else {
-        const lower = node.val.toLowerCase();
-        const s = new Set();
-        for (let i=0;i<items.length;i++) if(items[i].content.toLowerCase().includes(lower)) s.add(i);
-        return s;
-      }
+      const out = new Uint8Array(n);
+      if (!node.val) return out.fill(1); // 빈 값("")은 모든 행 일치
+      const re = node.re;
+      for (let i = 0; i < n; i++) if (re.test(items[i].content)) out[i] = 1;
+      return out;
     }
-    case 'and': { const l=evaluateNode(node.left,items), r=evaluateNode(node.right,items); const s=new Set(); for(const i of l) if(r.has(i)) s.add(i); return s; }
-    case 'or': { const l=evaluateNode(node.left,items), r=evaluateNode(node.right,items); for(const i of r) l.add(i); return l; }
-    case 'not': { const c=evaluateNode(node.child,items); const s=new Set(); for(let i=0;i<items.length;i++) if(!c.has(i)) s.add(i); return s; }
+    case 'and': { const l = evaluateNode(node.left, items), r = evaluateNode(node.right, items); for (let i = 0; i < n; i++) l[i] &= r[i]; return l; }
+    case 'or': { const l = evaluateNode(node.left, items), r = evaluateNode(node.right, items); for (let i = 0; i < n; i++) l[i] |= r[i]; return l; }
+    case 'not': { const c = evaluateNode(node.child, items); for (let i = 0; i < n; i++) c[i] ^= 1; return c; }
     case 'firstAfter': {
-      const tgt=evaluateNode(node.target,items), cond=evaluateNode(node.condition,items);
-      const s=new Set();
-      let condMet=false;
-      for(let i=0;i<items.length;i++){
-        if(cond.has(i)) condMet=true;
-        if(condMet && tgt.has(i)){ s.add(i); condMet=false; }
+      // 한 번 순회(O(n)): 조건 행 이후 아직 대상을 못 찾았으면(pending) 다음 대상 행을 표시.
+      // 대상 검사를 조건 갱신보다 먼저 해야 "조건 행보다 엄격히 뒤"가 유지된다.
+      const tgt = evaluateNode(node.target, items), cond = evaluateNode(node.condition, items);
+      const out = new Uint8Array(n);
+      let pending = false;
+      for (let i = 0; i < n; i++) {
+        if (pending && tgt[i]) { out[i] = 1; pending = false; }
+        if (cond[i]) pending = true;
       }
-      return s;
+      return out;
     }
     case 'lastBefore': {
-      const tgt=evaluateNode(node.target,items), cond=evaluateNode(node.condition,items);
-      const s=new Set(); let lastTgt=-1;
-      for(let i=0;i<items.length;i++){
-        if(tgt.has(i)) lastTgt=i;
-        if(cond.has(i) && lastTgt>=0){ s.add(lastTgt); lastTgt=-1; }
+      // 한 번 순회(O(n)): 조건 행을 만나면 그 직전까지의 마지막 대상 행을 표시.
+      // 조건 검사를 대상 갱신보다 먼저 해야 "조건 행보다 엄격히 앞"이 유지된다.
+      const tgt = evaluateNode(node.target, items), cond = evaluateNode(node.condition, items);
+      const out = new Uint8Array(n);
+      let lastTarget = -1;
+      for (let i = 0; i < n; i++) {
+        if (cond[i] && lastTarget >= 0) out[lastTarget] = 1;
+        if (tgt[i]) lastTarget = i;
       }
-      return s;
+      return out;
     }
   }
-  return new Set();
+  throw new Error('Unknown node type: ' + node.type);
 }
 
-// Collect highlight terms from AST
-function collectTerms(node) {
-  if(!node) return [];
-  switch(node.type) {
-    case 'literal': return node.val ? [node.val] : [];
-    case 'and': case 'or': return [...collectTerms(node.left), ...collectTerms(node.right)];
-    case 'not': return collectTerms(node.child);
-    case 'firstAfter': return [...collectTerms(node.target), ...collectTerms(node.condition)];
-    case 'lastBefore': return [...collectTerms(node.target), ...collectTerms(node.condition)];
+// 필터 슬롯 텍스트 → {ast, error}. 빈 텍스트는 {ast:null, error:null} (슬롯 무시, 오류 아님).
+// 잘못된 식은 error 메시지 (C# IsValid=false — 해당 슬롯은 필터링에서 빠진다).
+function compileFilter(text) {
+  if (!text || !trimWs(text)) return {ast:null, error:null};
+  try {
+    return {ast: parseExpression(tokenize(text)), error:null};
+  } catch (e) {
+    return {ast:null, error: e.message};
   }
-  return [];
 }
 
-// Check if single item matches a node
-function matchesSingle(node, item) {
-  if(!node) return true;
-  switch(node.type) {
-    case 'literal': {
-      if(!node.val) return true;
-      if(!node.quoted && /[*?#]/.test(node.val)) return wildcardToRegex(node.val, node.quoted).test(item.content);
-      return item.content.toLowerCase().includes(node.val.toLowerCase());
+// 하이라이트용 정규식(global) 목록 — NOT/FIRST/LAST 아래 리터럴 포함 (C# CollectHighlightTermsForItem)
+function collectHighlightRegexes(node, out = []) {
+  if (!node) return out;
+  switch (node.type) {
+    case 'literal': if (node.val) out.push(node.reAll); break;
+    case 'and': case 'or': collectHighlightRegexes(node.left, out); collectHighlightRegexes(node.right, out); break;
+    case 'not': collectHighlightRegexes(node.child, out); break;
+    case 'firstAfter': case 'lastBefore': collectHighlightRegexes(node.target, out); collectHighlightRegexes(node.condition, out); break;
+  }
+  return out;
+}
+
+// 하이라이트 HTML: 원문(raw)에서 일치 범위를 찾아 겹침을 정리한 뒤, 구간별로 이스케이프해 span 으로 감싼다.
+// layers = [{cls, regexes(global)}] — 앞쪽 레이어가 우선 (이미 칠해진 글자는 먼저 칠한 클래스를 유지).
+function highlightHTML(text, layers) {
+  let paint = null;
+  for (let L = 0; L < layers.length; L++) {
+    for (const re of layers[L].regexes) {
+      for (const m of text.matchAll(re)) {
+        const s = m.index, e = s + m[0].length;
+        if (s === e) continue;
+        if (!paint) paint = new Uint8Array(text.length);
+        for (let k = s; k < e; k++) if (!paint[k]) paint[k] = L + 1;
+      }
     }
-    case 'and': return matchesSingle(node.left,item) && matchesSingle(node.right,item);
-    case 'or': return matchesSingle(node.left,item) || matchesSingle(node.right,item);
-    case 'not': return !matchesSingle(node.child,item);
-    default: return true;
   }
+  if (!paint) return escapeHtml(text);
+  let html = '';
+  for (let s = 0; s < text.length; ) {
+    const v = paint[s];
+    let e = s + 1;
+    while (e < text.length && paint[e] === v) e++;
+    const seg = escapeHtml(text.substring(s, e));
+    html += v ? '<span class="' + layers[v - 1].cls + '">' + seg + '</span>' : seg;
+    s = e;
+  }
+  return html;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ============================================================
 // FILTER APPLICATION
 // ============================================================
+const FILTER_IDS = ['filterA','filterB','filterC','filterD'];
+
 function applyFilters() {
-  const filters = [
-    { id:'A', enabled: document.getElementById('filterACheck').checked, expr: document.getElementById('filterA').value },
-    { id:'B', enabled: document.getElementById('filterBCheck').checked, expr: document.getElementById('filterB').value },
-    { id:'C', enabled: document.getElementById('filterCCheck').checked, expr: document.getElementById('filterC').value },
-    { id:'D', enabled: document.getElementById('filterDCheck').checked, expr: document.getElementById('filterD').value },
-  ];
+  // 슬롯별 컴파일 — 빈 슬롯은 무시, 잘못된 슬롯도 필터링에서 빠지고(C# 와 동일) 입력란에 빨간 테두리 + 툴팁으로 표시
+  const slots = FILTER_IDS.map(id => {
+    const input = document.getElementById(id);
+    const { ast, error } = compileFilter(input.value);
+    input.classList.toggle('invalid', error !== null);
+    input.title = error !== null ? 'Invalid filter (ignored): ' + error : '';
+    return { ast, enabled: document.getElementById(id + 'Check').checked };
+  });
 
-  // Parse each filter
-  const parsedFilters = [];
-  for (const f of filters) {
-    if (!f.enabled || !f.expr.trim()) { parsedFilters.push(null); continue; }
-    const tokens = tokenize(f.expr);
-    const ast = parseExpression(tokens);
-    parsedFilters.push(ast);
-  }
+  // 유효한 슬롯은 체크 여부와 관계없이 평가 — matchedFilters(A=1,B=2,C=4,D=8)와 하이라이트는 체크와 무관 (C# 동작)
+  const bits = slots.map(s => s.ast ? evaluateNode(s.ast, allLogs) : null);
+  cachedHlTerms = slots.map(s => collectHighlightRegexes(s.ast));
 
-  // Evaluate on all logs
-  const matchSets = parsedFilters.map(ast => ast ? evaluateNode(ast, allLogs) : null);
-
-  // Combine filters (활성 슬롯을 OR 로 결합)
+  // 체크된 유효 슬롯만 OR 로 결합해 표시 여부를 정한다
   let combined = null;
-  const filterBits = [1, 2, 4, 8]; // A=1, B=2, C=4, D=8
-
-  // Reset matched filters
-  for (let i=0; i<allLogs.length; i++) allLogs[i].matchedFilters = 0;
-
-  // Mark individual filter matches
   for (let f=0; f<4; f++) {
-    if (matchSets[f]) {
-      for (const idx of matchSets[f]) {
-        allLogs[idx].matchedFilters |= filterBits[f];
-      }
-    }
-  }
-
-  // Combine with OR (활성 슬롯 결합)
-  for (let f=0; f<4; f++) {
-    if (!matchSets[f]) continue;
-    if (combined === null) { combined = new Set(matchSets[f]); continue; }
-    for (const i of matchSets[f]) combined.add(i);
+    const b = bits[f];
+    if (!slots[f].enabled || !b) continue;
+    if (combined === null) { combined = b.slice(); continue; }
+    for (let i=0; i<combined.length; i++) combined[i] |= b[i];
   }
 
   // Build filtered indices (respecting log kind visibility, corruption always visible)
   filteredIndices = [];
   for (let i=0; i<allLogs.length; i++) {
     const log = allLogs[i];
+    let mf = 0;
+    for (let f=0; f<4; f++) if (bits[f] && bits[f][i]) mf |= 1 << f;
+    log.matchedFilters = mf;
+    // 손상 마커는 LogKind 체크로는 숨기지 않지만 필터식에는 걸린다 (데스크톱 ApplyFilterResult 와 동일)
     if (log.kind !== CORRUPTION_LOGKIND) {
       const kindInfo = logKinds.get(log.kind);
       if (kindInfo && !kindInfo.enabled) continue;
-      if (combined && !combined.has(i)) continue;
     }
+    if (combined && !combined[i]) continue;
     filteredIndices.push(i);
   }
 
@@ -1641,7 +1760,7 @@ function updateCount() {
 // ============================================================
 let lineHeight = 0;
 let renderedRange = { start: -1, end: -1 };
-let cachedHlTerms = null;
+let cachedHlTerms = null;   // 슬롯별 하이라이트 정규식 목록 (applyFilters 가 갱신)
 let cachedDeltas = [];
 let poolSize = 0;
 let poolLines = [];   // array of {el, prefixEl, contentEl}
@@ -1652,36 +1771,18 @@ function precomputeDeltas() {
   let prevLog = null;
   for (let fi = 0; fi < filteredIndices.length; fi++) {
     const log = allLogs[filteredIndices[fi]];
-    let delta = 0;
-    if (prevLog) {
-      if (currentLogType === 'Type4') {
-        delta = Math.abs(log.time - prevLog.time);
-      } else if (currentLogType === 'Type5' || currentLogType === 'Type6') {
-        delta = (log.time.getTime() + (log.ms||0)) - (prevLog.time.getTime() + (prevLog.ms||0));
-      } else {
-        delta = (log.ms||0) - (prevLog.ms||0);
-      }
-      delta = Math.min(Math.abs(delta), 99999999);
-    }
-    cachedDeltas[fi] = delta;
+    cachedDeltas[fi] = prevLog ? calcDelta(log, prevLog) : 0;
     prevLog = log;
   }
 }
 
-function buildHlTerms() {
-  const hlTerms = [];
-  const ids = ['filterA','filterB','filterC','filterD'];
-  const checks = ['filterACheck','filterBCheck','filterCCheck','filterDCheck'];
-  for (let f = 0; f < 4; f++) {
-    const enabled = document.getElementById(checks[f]).checked;
-    const expr = document.getElementById(ids[f]).value;
-    if (enabled && expr.trim()) {
-      hlTerms.push(collectTerms(parseExpression(tokenize(expr))));
-    } else {
-      hlTerms.push([]);
-    }
-  }
-  cachedHlTerms = hlTerms;
+// Delta(ms) — C# CalculateDelta 와 같은 규칙: Type4/5/6 은 time 에 밀리초까지 들어 있으므로 시각 차이
+// (ms 를 더하면 이중 계산), Type1/2/3 은 Millisecond 필드(ms) 차이. 상한 99,999,999 (음수는 C# 처럼 그대로).
+function calcDelta(log, prevLog) {
+  const delta = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6')
+    ? log.time.getTime() - prevLog.time.getTime()
+    : (log.ms||0) - (prevLog.ms||0);
+  return Math.min(delta, 99999999);
 }
 
 function measureLineHeight() {
@@ -1727,7 +1828,6 @@ function createPool() {
 
 function renderLogs() {
   measureLineHeight();
-  buildHlTerms();
   precomputeDeltas();
   useMsTime = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
   renderedRange = { start: -1, end: -1 };
@@ -1750,31 +1850,17 @@ function renderLogs() {
 function getContentHTML(fi) {
   const absIdx = filteredIndices[fi];
   const log = allLogs[absIdx];
-  let html = escapeHtml(log.content);
 
+  // 범위는 원문에서 찾고 이스케이프는 highlightHTML 이 마지막에 한다. 겹치면 검색어 > A > B > C > D 순으로 우선.
+  const layers = [];
+  if (searchTerm) layers.push({ cls: 'hl-search', regexes: [new RegExp(escapeRegex(searchTerm), 'gi')] });
   const hlTerms = cachedHlTerms || [[], [], [], []];
   const hlClasses = ['hl-a', 'hl-b', 'hl-c', 'hl-d'];
   const mf = log.matchedFilters || 0;
   for (let f = 0; f < 4; f++) {
-    if (!(mf & (1 << f)) || !hlTerms[f].length) continue;
-    for (const term of hlTerms[f]) {
-      if (!term) continue;
-      if (/[*?#]/.test(term)) {
-        try {
-          const re = wildcardToRegex(term, false);
-          html = html.replace(re, (m, g1) => `<span class="${hlClasses[f]}">${g1 || m}</span>`);
-        } catch (e) { }
-      } else {
-        const re = new RegExp('(' + escapeRegex(escapeHtml(term)) + ')', 'gi');
-        html = html.replace(re, `<span class="${hlClasses[f]}">$1</span>`);
-      }
-    }
+    if ((mf & (1 << f)) && hlTerms[f].length) layers.push({ cls: hlClasses[f], regexes: hlTerms[f] });
   }
-  if (searchTerm) {
-    const re = new RegExp('(' + escapeRegex(escapeHtml(searchTerm)) + ')', 'gi');
-    html = html.replace(re, '<span class="hl-search">$1</span>');
-  }
-  return html;
+  return highlightHTML(log.content, layers);
 }
 
 function renderVisibleLines() {
@@ -1803,9 +1889,13 @@ function renderVisibleLines() {
       const absIdx = filteredIndices[fi];
       const log = allLogs[absIdx];
 
-      const timeStr = formatTime(log.time, useMsTime);
-      const delta = cachedDeltas[fi] || 0;
-      p.prefixEl.textContent = `${timeStr}[${String(delta).padStart(8)}] `;
+      if (currentLogType === 'PlainText') {
+        p.prefixEl.textContent = ''; // PlainText: 시간/delta prefix 없이 내용만 (데스크톱과 동일)
+      } else {
+        const timeStr = formatTime(log.time, useMsTime);
+        const delta = cachedDeltas[fi] || 0;
+        p.prefixEl.textContent = `${timeStr}[${String(delta).padStart(8)}] `;
+      }
 
       const kindInfo = logKinds.get(log.kind);
       p.contentEl.style.color = kindInfo ? kindInfo.color : '';
@@ -2057,19 +2147,7 @@ function formatTime(dt, withMs) {
   return `${h}:${m}:${s}`;
 }
 
-function formatDelta(ms) {
-  if (ms > 99999999) return '99999999';
-  if (ms === 0) return '       0';
-  return String(ms).padStart(8);
-}
-
-function escapeHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+// escapeHtml / escapeRegex 는 FILTER EXPRESSION ENGINE 섹션에 있다 (테스트가 그 섹션만 실행하므로)
 
 // ============================================================
 // SELECTION MODE (mobile-friendly: long-press to enter)
@@ -2125,6 +2203,7 @@ document.getElementById('selCopy').onclick = () => {
   const sorted = [...selectedIndices].sort((a, b) => a - b);
   const lines = sorted.map(i => {
     const log = allLogs[i];
+    if (currentLogType === 'PlainText') return log.content;
     return `[${formatTime(log.time, useMsT)}][${String(log.kind).padStart(2, '0')}]${log.content}`;
   });
   navigator.clipboard.writeText(lines.join('\n')).then(() => {
@@ -2227,7 +2306,7 @@ function showDetail(fi) {
   const log = allLogs[absIdx];
   const kindInfo = logKinds.get(log.kind);
   const useMsTime = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
-  document.getElementById('detailTime').textContent = formatTime(log.time, useMsTime);
+  document.getElementById('detailTime').textContent = currentLogType === 'PlainText' ? '' : formatTime(log.time, useMsTime);
   document.getElementById('detailKind').textContent = kindInfo ? `[${log.kind}] ${kindInfo.name}` : `[${log.kind}]`;
   document.getElementById('detailBody').textContent = log.content;
   document.getElementById('detailModal').classList.add('show');
@@ -2332,13 +2411,17 @@ document.getElementById('timeJumpInput').addEventListener('keydown', e => {
 });
 
 function doTimeJump() {
+  if (currentLogType === 'PlainText') { toast('Plain text mode does not support time-based navigation.'); return; }
   const val = document.getElementById('timeJumpInput').value.trim();
   const m = /^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/.exec(val);
   if (!m) { toast('Format: HH:mm:ss or HH:mm:ss.fff'); return; }
-  const target = new Date(2000,0,1, parseInt(m[1]), parseInt(m[2]), parseInt(m[3]), m[4]?parseInt(m[4]):0);
+  // 하루 중 시각으로 비교 (C# JumpToTime 의 LogTime.TimeOfDay 와 동일) — 날짜까지 비교하면
+  // 실제 날짜를 가진 Type3/5/6 은 항상 첫 줄로 간다. ".5" 는 500ms (TimeSpan.Parse 와 동일).
+  const targetMs = ((parseInt(m[1]) * 60 + parseInt(m[2])) * 60 + parseInt(m[3])) * 1000 + (m[4] ? parseInt(m[4].padEnd(3, '0')) : 0);
+  const msOfDay = t => ((t.getHours() * 60 + t.getMinutes()) * 60 + t.getSeconds()) * 1000 + t.getMilliseconds();
   // Find first filtered log >= target time
   for (let fi=0; fi<filteredIndices.length; fi++) {
-    if (allLogs[filteredIndices[fi]].time >= target) {
+    if (msOfDay(allLogs[filteredIndices[fi]].time) >= targetMs) {
       scrollToFiltered(fi);
       closeTimeJump();
       return;
@@ -2376,55 +2459,73 @@ document.getElementById('btnCopy').onclick = () => {
 // ============================================================
 // EXPORT
 // ============================================================
+// 데스크톱 Save Txt (SaveLogsByMode) 와 같은 의미:
+//   all       = 전체 로그 중 LogKind 가 체크된 것 (필터식은 무시)
+//   filter    = 화면에 보이는 줄
+//   highlight = 보이는 줄 중 필터에 매칭된 줄 — 내용은 하이라이트 구간만 " ... " 로 연결
 document.getElementById('exportBtn').onclick = () => {
   const mode = document.querySelector('input[name=saveMode]:checked').value;
-  let lines = [];
-  const indices = mode === 'all' ? filteredIndices :
-    mode === 'filter' ? filteredIndices.filter(i => allLogs[i].matchedFilters > 0) :
-    filteredIndices.filter(i => allLogs[i].matchedFilters > 0);
-
-  let prevTime = null;
-  for (const i of indices) {
-    const log = allLogs[i];
-    const delta = prevTime ? Math.min(Math.abs(log.time - prevTime), 99999999) : 0;
-    const deltaStr = String(delta).padStart(8);
-    let content = log.content;
-    if (mode === 'highlight') {
-      // Extract highlight terms
-      const terms = [];
-      for (let f=0; f<4; f++) {
-        if (!(log.matchedFilters & (1<<f))) continue;
-        const expr = document.getElementById(['filterA','filterB','filterC','filterD'][f]).value;
-        if (!expr.trim()) continue;
-        const ast = parseExpression(tokenize(expr));
-        terms.push(...collectTerms(ast));
-      }
-      if (terms.length) {
-        const excerpts = [];
-        for (const t of terms) {
-          const idx = content.toLowerCase().indexOf(t.toLowerCase());
-          if (idx >= 0) {
-            const start = Math.max(0, idx-10);
-            const end = Math.min(content.length, idx+t.length+10);
-            excerpts.push(content.substring(start, end));
-          }
-        }
-        content = excerpts.length ? excerpts.join(' ... ') : content;
-      }
+  let indices;
+  if (mode === 'all') {
+    indices = [];
+    for (let i = 0; i < allLogs.length; i++) {
+      const info = logKinds.get(allLogs[i].kind);
+      if (!info || info.enabled) indices.push(i);
     }
-    const useMsE = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
-    lines.push(`[${formatTime(log.time,useMsE)}][${deltaStr}][${String(log.kind).padStart(2,'0')}]${content}`);
-    prevTime = log.time;
+  } else if (mode === 'filter') {
+    indices = filteredIndices;
+  } else {
+    indices = filteredIndices.filter(i => allLogs[i].matchedFilters > 0);
   }
 
-  const blob = new Blob([lines.join('\n')], {type:'text/plain'});
+  const isPlain = currentLogType === 'PlainText';
+  const useMsE = (currentLogType === 'Type4' || currentLogType === 'Type5' || currentLogType === 'Type6');
+  const lines = isPlain ? [] : [`LOG_TYPE(${currentLogType})`];
+  let prevLog = null;
+  for (const i of indices) {
+    const log = allLogs[i];
+    const content = mode === 'highlight' && cachedHlTerms ? extractHighlighted(log) : log.content;
+    if (isPlain) {
+      lines.push(content);
+    } else {
+      const delta = prevLog ? calcDelta(log, prevLog) : 0;
+      lines.push(`[${formatTime(log.time,useMsE)}][${String(delta).padStart(8)}][${String(log.kind).padStart(2,'0')}]${content}`);
+    }
+    prevLog = log;
+  }
+
+  // 파일 이름도 데스크톱과 같게: <원본 이름> + _all.txt / .txt / _highlight.txt
+  const base = (document.getElementById('fileName').textContent || '').replace(/\.[^.]*$/, '') || 'log';
+  const suffix = mode === 'all' ? '_all.txt' : mode === 'highlight' ? '_highlight.txt' : '.txt';
+  const blob = new Blob([lines.join('\r\n') + '\r\n'], {type:'text/plain'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'export.txt'; a.click();
+  a.href = url; a.download = base + suffix; a.click();
   URL.revokeObjectURL(url);
   closePanel('save');
-  toast(`Exported ${lines.length} lines`);
+  toast(`Exported ${indices.length} logs`);
 };
+
+// 데스크톱 ExtractHighlightedText 와 동일: 매칭된 슬롯의 모든 매칭 구간을 합쳐 " ... " 로 연결 (없으면 원문)
+function extractHighlighted(log) {
+  const content = log.content;
+  const ranges = [];
+  for (let f = 0; f < 4; f++) {
+    if (!(log.matchedFilters & (1 << f))) continue;
+    for (const re of cachedHlTerms[f]) {
+      for (const m of content.matchAll(re)) if (m[0]) ranges.push([m.index, m.index + m[0].length]);
+    }
+  }
+  if (!ranges.length) return content;
+  ranges.sort((x, y) => x[0] - y[0]);
+  const merged = [ranges[0].slice()];
+  for (const [s, e] of ranges.slice(1)) {
+    const last = merged[merged.length - 1];
+    if (s <= last[1]) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  return merged.map(([s, e]) => content.substring(s, e)).join(' ... ');
+}
 
 // ============================================================
 // FONT FAMILY & SIZE
@@ -2542,7 +2643,7 @@ document.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key === 't') { e.preventDefault(); document.getElementById('btnTime').click(); }
   if (e.key === 'Escape') {
     if (selectMode) { exitSelectMode(); }
-    closeSearch(); closeTimeJump(); closeDetail();
+    closeSearch(); closeTimeJump(); closeDetail(); closeZipPicker();
     document.getElementById('manualModal').classList.remove('show');
   }
 });
